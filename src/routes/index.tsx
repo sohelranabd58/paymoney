@@ -240,6 +240,3 @@ function ErrorScreen({ message }: { message: string }) {
     </div>
   );
 }
-
-// suppress unused import for createFileRoute (template provided)
-void createFileRoute;
