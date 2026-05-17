@@ -14,7 +14,167 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      ad_watches: {
+        Row: {
+          chat_id: string
+          id: string
+          points: number
+          watched_at: string
+        }
+        Insert: {
+          chat_id: string
+          id?: string
+          points: number
+          watched_at?: string
+        }
+        Update: {
+          chat_id?: string
+          id?: string
+          points?: number
+          watched_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ad_watches_chat_id_fkey"
+            columns: ["chat_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["chat_id"]
+          },
+        ]
+      }
+      app_settings: {
+        Row: {
+          key: string
+          updated_at: string
+          value: string
+        }
+        Insert: {
+          key: string
+          updated_at?: string
+          value: string
+        }
+        Update: {
+          key?: string
+          updated_at?: string
+          value?: string
+        }
+        Relationships: []
+      }
+      app_users: {
+        Row: {
+          banned: boolean
+          chat_id: string
+          created_at: string
+          last_ad_at: string | null
+          points: number
+          total_earned: number
+        }
+        Insert: {
+          banned?: boolean
+          chat_id: string
+          created_at?: string
+          last_ad_at?: string | null
+          points?: number
+          total_earned?: number
+        }
+        Update: {
+          banned?: boolean
+          chat_id?: string
+          created_at?: string
+          last_ad_at?: string | null
+          points?: number
+          total_earned?: number
+        }
+        Relationships: []
+      }
+      withdraw_methods: {
+        Row: {
+          created_at: string
+          enabled: boolean
+          icon: string | null
+          id: string
+          instructions: string | null
+          min_amount: number
+          name: string
+          sort_order: number
+        }
+        Insert: {
+          created_at?: string
+          enabled?: boolean
+          icon?: string | null
+          id?: string
+          instructions?: string | null
+          min_amount?: number
+          name: string
+          sort_order?: number
+        }
+        Update: {
+          created_at?: string
+          enabled?: boolean
+          icon?: string | null
+          id?: string
+          instructions?: string | null
+          min_amount?: number
+          name?: string
+          sort_order?: number
+        }
+        Relationships: []
+      }
+      withdraw_requests: {
+        Row: {
+          account: string
+          amount: number
+          chat_id: string
+          created_at: string
+          id: string
+          method_id: string | null
+          method_name: string
+          note: string | null
+          processed_at: string | null
+          status: string
+        }
+        Insert: {
+          account: string
+          amount: number
+          chat_id: string
+          created_at?: string
+          id?: string
+          method_id?: string | null
+          method_name: string
+          note?: string | null
+          processed_at?: string | null
+          status?: string
+        }
+        Update: {
+          account?: string
+          amount?: number
+          chat_id?: string
+          created_at?: string
+          id?: string
+          method_id?: string | null
+          method_name?: string
+          note?: string | null
+          processed_at?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "withdraw_requests_chat_id_fkey"
+            columns: ["chat_id"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["chat_id"]
+          },
+          {
+            foreignKeyName: "withdraw_requests_method_id_fkey"
+            columns: ["method_id"]
+            isOneToOne: false
+            referencedRelation: "withdraw_methods"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
