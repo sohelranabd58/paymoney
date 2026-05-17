@@ -216,7 +216,7 @@ export const adminUpdateUser = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     await verifyAdmin(data.password);
-    const patch: Record<string, unknown> = {};
+    const patch: { points?: number; banned?: boolean } = {};
     if (data.points !== undefined) patch.points = data.points;
     if (data.banned !== undefined) patch.banned = data.banned;
     if (Object.keys(patch).length === 0) return { ok: true };
