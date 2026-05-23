@@ -16,18 +16,21 @@ export type Database = {
     Tables: {
       ad_watches: {
         Row: {
+          ad_type: string
           chat_id: string
           id: string
           points: number
           watched_at: string
         }
         Insert: {
+          ad_type?: string
           chat_id: string
           id?: string
           points: number
           watched_at?: string
         }
         Update: {
+          ad_type?: string
           chat_id?: string
           id?: string
           points?: number
@@ -66,7 +69,13 @@ export type Database = {
           banned: boolean
           chat_id: string
           created_at: string
+          flagged: boolean
           last_ad_at: string | null
+          last_inapp_at: string | null
+          last_ip: string | null
+          last_popup_at: string | null
+          last_ua: string | null
+          level: number
           points: number
           total_earned: number
         }
@@ -74,7 +83,13 @@ export type Database = {
           banned?: boolean
           chat_id: string
           created_at?: string
+          flagged?: boolean
           last_ad_at?: string | null
+          last_inapp_at?: string | null
+          last_ip?: string | null
+          last_popup_at?: string | null
+          last_ua?: string | null
+          level?: number
           points?: number
           total_earned?: number
         }
@@ -82,9 +97,116 @@ export type Database = {
           banned?: boolean
           chat_id?: string
           created_at?: string
+          flagged?: boolean
           last_ad_at?: string | null
+          last_inapp_at?: string | null
+          last_ip?: string | null
+          last_popup_at?: string | null
+          last_ua?: string | null
+          level?: number
           points?: number
           total_earned?: number
+        }
+        Relationships: []
+      }
+      task_completions: {
+        Row: {
+          chat_id: string
+          completed_at: string
+          id: string
+          status: string
+          task_id: string
+        }
+        Insert: {
+          chat_id: string
+          completed_at?: string
+          id?: string
+          status?: string
+          task_id: string
+        }
+        Update: {
+          chat_id?: string
+          completed_at?: string
+          id?: string
+          status?: string
+          task_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_completions_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tasks: {
+        Row: {
+          active: boolean
+          channel_username: string | null
+          created_at: string
+          description: string | null
+          icon: string | null
+          id: string
+          reward_points: number
+          sort_order: number
+          task_type: string
+          title: string
+          url: string | null
+          verify_method: string
+        }
+        Insert: {
+          active?: boolean
+          channel_username?: string | null
+          created_at?: string
+          description?: string | null
+          icon?: string | null
+          id?: string
+          reward_points?: number
+          sort_order?: number
+          task_type?: string
+          title: string
+          url?: string | null
+          verify_method?: string
+        }
+        Update: {
+          active?: boolean
+          channel_username?: string | null
+          created_at?: string
+          description?: string | null
+          icon?: string | null
+          id?: string
+          reward_points?: number
+          sort_order?: number
+          task_type?: string
+          title?: string
+          url?: string | null
+          verify_method?: string
+        }
+        Relationships: []
+      }
+      user_devices: {
+        Row: {
+          chat_id: string
+          created_at: string
+          id: string
+          ip: string | null
+          user_agent: string | null
+        }
+        Insert: {
+          chat_id: string
+          created_at?: string
+          id?: string
+          ip?: string | null
+          user_agent?: string | null
+        }
+        Update: {
+          chat_id?: string
+          created_at?: string
+          id?: string
+          ip?: string | null
+          user_agent?: string | null
         }
         Relationships: []
       }

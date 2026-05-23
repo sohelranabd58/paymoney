@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WithdrawRouteImport } from './routes/withdraw'
+import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as HistoryRouteImport } from './routes/history'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
@@ -18,6 +19,11 @@ import { Route as AdminDashboardRouteImport } from './routes/admin.dashboard'
 const WithdrawRoute = WithdrawRouteImport.update({
   id: '/withdraw',
   path: '/withdraw',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TasksRoute = TasksRouteImport.update({
+  id: '/tasks',
+  path: '/tasks',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HistoryRoute = HistoryRouteImport.update({
@@ -45,6 +51,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
   '/history': typeof HistoryRoute
+  '/tasks': typeof TasksRoute
   '/withdraw': typeof WithdrawRoute
   '/admin/dashboard': typeof AdminDashboardRoute
 }
@@ -52,6 +59,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
   '/history': typeof HistoryRoute
+  '/tasks': typeof TasksRoute
   '/withdraw': typeof WithdrawRoute
   '/admin/dashboard': typeof AdminDashboardRoute
 }
@@ -60,19 +68,27 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
   '/history': typeof HistoryRoute
+  '/tasks': typeof TasksRoute
   '/withdraw': typeof WithdrawRoute
   '/admin/dashboard': typeof AdminDashboardRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/admin' | '/history' | '/withdraw' | '/admin/dashboard'
+  fullPaths:
+    | '/'
+    | '/admin'
+    | '/history'
+    | '/tasks'
+    | '/withdraw'
+    | '/admin/dashboard'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/admin' | '/history' | '/withdraw' | '/admin/dashboard'
+  to: '/' | '/admin' | '/history' | '/tasks' | '/withdraw' | '/admin/dashboard'
   id:
     | '__root__'
     | '/'
     | '/admin'
     | '/history'
+    | '/tasks'
     | '/withdraw'
     | '/admin/dashboard'
   fileRoutesById: FileRoutesById
@@ -81,6 +97,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRouteWithChildren
   HistoryRoute: typeof HistoryRoute
+  TasksRoute: typeof TasksRoute
   WithdrawRoute: typeof WithdrawRoute
 }
 
@@ -91,6 +108,13 @@ declare module '@tanstack/react-router' {
       path: '/withdraw'
       fullPath: '/withdraw'
       preLoaderRoute: typeof WithdrawRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/tasks': {
+      id: '/tasks'
+      path: '/tasks'
+      fullPath: '/tasks'
+      preLoaderRoute: typeof TasksRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/history': {
@@ -138,18 +162,9 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRouteWithChildren,
   HistoryRoute: HistoryRoute,
+  TasksRoute: TasksRoute,
   WithdrawRoute: WithdrawRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}

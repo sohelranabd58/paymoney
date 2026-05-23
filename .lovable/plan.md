@@ -1,112 +1,96 @@
-## Telegram Mini App — Monetag Rewarded Ads
+# Advanced Upgrade Plan
 
-User Telegram er bot button thekay webapp open korbe: `https://yoursite.com/?id=<telegram_chat_id>`. Ad dekhle point pabe, point withdraw korte parbe. Admin panel theke shob kichu control hobe.
+Existing app (Monetag Telegram mini app + admin panel) ke advanced banano hobe. UI improved hobe (current style rakhbo, polish + Tasks/Daily sections add hobe).
 
-### Pages / Routes
+## 1. Multiple Ad Types (3 Monetag zones)
 
-```
-/                  -> Mini app (reads ?id=chat_id from URL)
-/withdraw          -> Withdraw request form
-/history           -> Ad watch + withdraw history
-/admin             -> Admin login (password: 76737)
-/admin/dashboard   -> Admin settings + withdraw approvals
-```
+Monetag er 3 ta format alada button hisebe:
 
-### Mini App (`/`)
+| Type | SDK function | Default zone | Default points |
+|---|---|---|---|
+| Rewarded Interstitial | `show_<zone>()` | 9518673 | 10 |
+| Rewarded Popup | `show_<zone>('pop')` | (admin set) | 5 |
+| In-App Interstitial | auto / timer-based | (admin set) | 3 (auto credit) |
 
-- URL theke `?id=` (telegram chat id) read kore — na thakle error dekhabe ("Please open from Telegram bot")
-- First time chat_id ashle DB te user create hobe (points=0)
-- Big "Watch Ad & Earn" button
-- Live balance display + earned points per ad (admin er set kora value)
-- Monetag SDK load: `<script src='//libtl.com/sdk.js' data-zone='9518673' data-sdk='show_9518673'>` — zone id admin panel theke dynamic
-- Button click → `show_9518673()` call → ad complete hole server function call kore point add (server side validate kore double-click/spam rokhbe — minimum 30s gap)
-- Bottom nav: Earn | Withdraw | History | Referral link (optional)
-- Telegram WebApp SDK (`telegram-web-app.js`) — theme color, haptic feedback, close button
+- Home page e 2 ta section: **Tasks** (Interstitial + Popup — Claim button) ar **Daily** (In-App auto).
+- Each type er alada cooldown + daily limit (admin controlled).
+- DB e `ad_watches.ad_type` column add hobe.
 
-### Withdraw (`/withdraw`)
+## 2. Tasks / Offerwall System
 
-- Available methods admin panel theke (bKash, Nagad, Binance Pay, USDT-BEP20 etc.)
-- Form: method select + account number/wallet + amount
-- Min withdraw amount admin controlled
-- Submit → DB te `pending` status e save → admin approve korle status update
+Admin custom task add korte parbe (Telegram channel join, group join, bot start, custom URL visit).
 
-### Admin Panel (`/admin`)
+- Table `tasks`: id, title, description, icon, url, reward_points, task_type (`join_channel` | `visit_url` | `custom`), verify_method (`auto` | `manual` | `telegram_member`), channel_username (nullable), active, sort_order.
+- Table `task_completions`: id, chat_id, task_id, status (`pending`/`approved`/`rejected`), completed_at.
+- User flow: Task list → click → opens URL → "I've done it" button → server verifies (Telegram `getChatMember` for channels, auto-approve for url) → points credited.
+- Admin can add/edit/delete tasks + approve manual ones.
 
-- Simple password login (76737) — session localStorage e store
-- Password admin panel theke change kora jabe
+## 3. VIP / Level System
 
-**Dashboard tabs:**
+User more ads = higher level = more points per ad (multiplier).
 
-1. **Settings**
-   - Monetag SDK zone id (default: `show_9518673`)
-   - Monetag data-zone (default: `9518673`)
-   - Admin Telegram chat id (notifications jaby ekhane)
-   - Bot token (optional — withdraw approve hole user ke notify korar jonno)
-   - Points per ad watch
-   - Min withdraw amount
-   - Admin password
+- Levels stored in `app_settings` as JSON: `[{level:1,min_ads:0,multiplier:1.0,name:"Bronze"},{level:2,min_ads:100,multiplier:1.2,name:"Silver"},...]`
+- `app_users` e `level` column add (computed on each ad claim).
+- Home page e current level badge + progress bar (next level kotodur).
+- Admin edit kortay parbe levels JSON.
 
-2. **Withdraw Methods** — add/edit/delete methods (name, icon, min amount, instructions)
+## 4. Anti-Fraud
 
-3. **Withdraw Requests** — pending list, approve/reject button (approve hole user balance theke deduct + bot notify)
+- Table `user_devices`: chat_id, ip, user_agent, fingerprint, created_at.
+- On `getUserState`: capture IP (from request headers) + UA.
+- If same IP/UA already linked to different chat_id beyond limit (default 3) → flag user + block ad claims.
+- Admin panel e flagged users list, manual unblock.
+- Settings: `max_accounts_per_ip` (default 3), `anti_fraud_enabled` (true/false).
 
-4. **Users** — list, search by chat_id, manual point adjust, ban
+## 5. Statistics Dashboard (Admin)
 
-### Database (Lovable Cloud)
+New tab `Stats` admin dashboard e:
+- Total users, active today, total ads watched, ads today, total points earned, total withdrawn (approved), pending withdrawals, total tasks completed.
+- Simple line chart (Recharts) — last 7 days: new users, ads watched, withdrawals.
+- Top 10 earners table.
 
-```
-users           (chat_id PK, points, total_earned, banned, created_at)
-ad_watches      (id, chat_id, points, watched_at) — anti-fraud log
-withdraw_requests (id, chat_id, method, account, amount, status, created_at, processed_at)
-withdraw_methods (id, name, icon, min_amount, instructions, enabled)
-settings         (key PK, value) — single key-value table for all admin settings
-```
+## 6. UI — Inspired but Improved
 
-RLS: Public read disabled. Shob mutation server functions diye hobe (chat_id verify + rate limit).
+Current dark theme rakhbo + polish:
+- Home: gradient header (balance + level badge + progress), then **Tasks** section (3 ad cards with emoji + Claim), then **Daily** section (in-app + check-in if exists), then **Offers** section (custom tasks list).
+- Bottom nav: 4 tabs — Home, Stats (personal earnings chart), Withdraw, History. (Leaderboard skip kora hocche unless chao.)
+- Smooth animations, glassmorphism cards, better typography.
+- Mobile-first (360px viewport optimized).
 
-### Server Functions
+## 7. Admin Panel Additions
 
-- `getUser(chatId)` — auto-create if not exists, return balance + settings
-- `claimAdReward(chatId, nonce)` — server-side cooldown check (min 30s), add points
-- `submitWithdraw(chatId, method, account, amount)` — validate balance, create request, notify admin via bot
-- `adminLogin(password)` — returns session token
-- `adminUpdateSettings`, `adminListWithdraws`, `adminApproveWithdraw`, `adminListUsers` etc. — all check admin session
+New tabs:
+- **Stats** — overview dashboard
+- **Tasks** — CRUD for custom tasks
+- **Ad Zones** — 3 alada zone id (interstitial / popup / inapp) + points per type + cooldown per type + daily limit per type
+- **Levels** — JSON editor for VIP tiers
+- **Anti-fraud** — flagged users list, settings
 
-### Anti-Fraud
+Existing tabs (Settings / Methods / Withdraws / Users) thakbe.
 
-- Server side ad watch validation (timestamp gap minimum 30s between claims)
-- 1 chat_id e daily max ad limit (admin configurable)
-- Withdraw amount ≤ balance check server side
+## Technical Plan
 
-### Defaults (admin pore change korte parbe)
+**DB migrations:**
+1. `ALTER TABLE ad_watches ADD COLUMN ad_type text DEFAULT 'interstitial';`
+2. `ALTER TABLE app_users ADD COLUMN level int DEFAULT 1, ADD COLUMN flagged boolean DEFAULT false, ADD COLUMN last_ip text, ADD COLUMN last_ua text;`
+3. Create `tasks`, `task_completions`, `user_devices` tables (RLS enabled, no public policies — admin client only).
+4. Seed new settings keys: `zone_interstitial`, `zone_popup`, `zone_inapp`, `points_interstitial`, `points_popup`, `points_inapp`, `cooldown_interstitial`, `cooldown_popup`, `cooldown_inapp`, `daily_limit_interstitial`, `daily_limit_popup`, `daily_limit_inapp`, `levels_json`, `max_accounts_per_ip`, `anti_fraud_enabled`.
 
-- Points per ad: 10
-- Min withdraw: 1000 points
-- Daily ad limit: 100
-- Withdraw methods: bKash, Nagad, Binance Pay (USDT)
+**Server functions (new/updated):**
+- `claimAdReward({chatId, adType})` — type-specific cooldown/limit/points, level multiplier, anti-fraud check
+- `listTasks(chatId)` — tasks + completion status
+- `claimTask({chatId, taskId})` — verify + credit
+- `getStats()` (admin) — aggregates
+- `adminSaveTask`, `adminDeleteTask`
+- `adminGetFlagged`, `adminUnflagUser`
+- Update `getUserState` to return all 3 zone configs + level info + IP capture
 
-### Tech
+**Frontend:**
+- Rewrite `src/routes/index.tsx` with Tasks/Daily/Offers sections
+- New `src/routes/stats.tsx` (user personal stats)
+- Add tabs in `src/routes/admin.dashboard.tsx`: Stats, Tasks, Ad Zones, Levels, Anti-fraud
+- Recharts install for charts
 
-- Lovable Cloud (Postgres + RLS + server functions)
-- TanStack Start routes
-- Tailwind + shadcn UI (dark theme, Telegram-style)
-- Monetag SDK loaded dynamically with admin-set zone id
-- Telegram WebApp JS for native feel
+**Out of scope (ask if needed later):** Referral system, daily check-in, leaderboard public page, multi-language, broadcast.
 
-### User Flow
-
-```
-Telegram bot button "Open App"
-   ↓
-https://app.com/?id=123456789
-   ↓
-Auto-register user → show balance
-   ↓
-Click "Watch Ad" → Monetag ad → +10 points
-   ↓
-Go to Withdraw → submit request → admin notified
-   ↓
-Admin approves → bot sends confirmation message
-```
-
-Next step: Lovable Cloud enable korbo, database schema banabo, tarpor mini app + admin panel build korbo. Approve korle shuru kori.
+Approve korle implementation start korbo.
