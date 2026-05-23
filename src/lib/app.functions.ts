@@ -241,12 +241,12 @@ export const claimAdReward = createServerFn({ method: "POST" })
     const newTotal = Number(user.total_earned) + earned;
     const nowIso = new Date().toISOString();
 
-    const patch: Record<string, unknown> = {
+    const patch = {
       points: newPoints,
       total_earned: newTotal,
       level: current.level,
-    };
-    patch[cfg.lastCol] = nowIso;
+      [cfg.lastCol]: nowIso,
+    } as { points: number; total_earned: number; level: number; last_ad_at?: string; last_popup_at?: string; last_inapp_at?: string };
 
     const { error: ue2 } = await supabaseAdmin
       .from("app_users")
