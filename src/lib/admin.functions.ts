@@ -27,7 +27,7 @@ export const adminGetAll = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     await verifyAdmin(data.password);
-    const [settings, methods, withdraws, users, stats] = await Promise.all([
+    const [settings, methods, withdraws, users, stats, tasks] = await Promise.all([
       supabaseAdmin.from("app_settings").select("*"),
       supabaseAdmin.from("withdraw_methods").select("*").order("sort_order"),
       supabaseAdmin
@@ -41,6 +41,7 @@ export const adminGetAll = createServerFn({ method: "POST" })
         .order("created_at", { ascending: false })
         .limit(500),
       supabaseAdmin.from("ad_watches").select("*", { count: "exact", head: true }),
+      supabaseAdmin.from("tasks").select("*").order("sort_order"),
     ]);
     const settingsMap: Record<string, string> = {};
     for (const r of settings.data ?? []) settingsMap[r.key] = r.value;
@@ -50,6 +51,131 @@ export const adminGetAll = createServerFn({ method: "POST" })
       withdraws: withdraws.data ?? [],
       users: users.data ?? [],
       total_ads: stats.count ?? 0,
+      tasks: tasks.data ?? [],
+    };
+  });
+
+export const adminGetStats = createServerFn({ method: "POST" })
+  .inputValidator((d: { password: string }) =>
+    z.object({ password: z.string().min(1).max(100) }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    await verifyAdmin(data.password);
+
+    const since7 = new Date();
+    since7.setUTCDate(since7.getUTCDate() - 6);
+    since7.setUTCHours(0, 0, 0, 0);
+    const sinceToday = new Date();
+    sinceToday.setUTCHours(0, 0, 0, 0);
+
+    const [
+      totalUsersR,
+      todayUsersR,
+      totalAdsR,
+      todayAdsR,
+      pendingWdR,
+      approvedWdR,
+      totalTasksR,
+      ads7R,
+      users7R,
+      wd7R,
+      topR,
+    ] = await Promise.all([
+      supabaseAdmin.from("app_users").select("*", { count: "exact", head: true }),
+      supabaseAdmin
+        .from("app_users")
+        .select("*", { count: "exact", head: true })
+        .gte("created_at", sinceToday.toISOString()),
+      supabaseAdmin.from("ad_watches").select("*", { count: "exact", head: true }),
+      supabaseAdmin
+        .from("ad_watches")
+        .select("*", { count: "exact", head: true })
+        .gte("watched_at", sinceToday.toISOString()),
+      supabaseAdmin
+        .from("withdraw_requests")
+        .select("amount", { count: "exact" })
+        .eq("status", "pending"),
+      supabaseAdmin
+        .from("withdraw_requests")
+        .select("amount")
+        .eq("status", "approved"),
+      supabaseAdmin.from("task_completions").select("*", { count: "exact", head: true }),
+      supabaseAdmin
+        .from("ad_watches")
+        .select("watched_at,points")
+        .gte("watched_at", since7.toISOString()),
+      supabaseAdmin
+        .from("app_users")
+        .select("created_at")
+        .gte("created_at", since7.toISOString()),
+      supabaseAdmin
+        .from("withdraw_requests")
+        .select("created_at,amount,status")
+        .gte("created_at", since7.toISOString()),
+      supabaseAdmin
+        .from("app_users")
+        .select("chat_id,total_earned,points")
+        .order("total_earned", { ascending: false })
+        .limit(10),
+    ]);
+
+    const approvedTotal = (approvedWdR.data ?? []).reduce(
+      (s, r) => s + Number(r.amount),
+      0,
+    );
+    const pendingTotal = (pendingWdR.data ?? []).reduce(
+      (s, r) => s + Number(r.amount ?? 0),
+      0,
+    );
+
+    // build 7-day buckets
+    const days: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(since7);
+      d.setUTCDate(d.getUTCDate() + i);
+      days.push(d.toISOString().slice(0, 10));
+    }
+    const dayKey = (iso: string) => iso.slice(0, 10);
+    const adsByDay = Object.fromEntries(days.map((d) => [d, 0]));
+    const pointsByDay = Object.fromEntries(days.map((d) => [d, 0]));
+    const usersByDay = Object.fromEntries(days.map((d) => [d, 0]));
+    const wdByDay = Object.fromEntries(days.map((d) => [d, 0]));
+    for (const a of ads7R.data ?? []) {
+      const k = dayKey(a.watched_at as string);
+      if (k in adsByDay) {
+        adsByDay[k]++;
+        pointsByDay[k] += Number(a.points);
+      }
+    }
+    for (const u of users7R.data ?? []) {
+      const k = dayKey(u.created_at as string);
+      if (k in usersByDay) usersByDay[k]++;
+    }
+    for (const w of wd7R.data ?? []) {
+      if (w.status !== "approved") continue;
+      const k = dayKey(w.created_at as string);
+      if (k in wdByDay) wdByDay[k] += Number(w.amount);
+    }
+
+    return {
+      totals: {
+        users: totalUsersR.count ?? 0,
+        users_today: todayUsersR.count ?? 0,
+        ads: totalAdsR.count ?? 0,
+        ads_today: todayAdsR.count ?? 0,
+        pending_withdraws: pendingWdR.count ?? 0,
+        pending_amount: pendingTotal,
+        paid_amount: approvedTotal,
+        tasks_completed: totalTasksR.count ?? 0,
+      },
+      chart: days.map((d) => ({
+        day: d.slice(5),
+        ads: adsByDay[d],
+        points: pointsByDay[d],
+        users: usersByDay[d],
+        withdrawn: wdByDay[d],
+      })),
+      top: topR.data ?? [],
     };
   });
 
@@ -58,7 +184,7 @@ export const adminUpdateSettings = createServerFn({ method: "POST" })
     z
       .object({
         password: z.string().min(1).max(100),
-        settings: z.record(z.string().min(1).max(60), z.string().max(2000)),
+        settings: z.record(z.string().min(1).max(60), z.string().max(5000)),
       })
       .parse(d),
   )
@@ -153,7 +279,6 @@ export const adminProcessWithdraw = createServerFn({ method: "POST" })
 
     const newStatus = data.action === "approve" ? "approved" : "rejected";
 
-    // if reject, refund points
     if (data.action === "reject") {
       const { data: user } = await supabaseAdmin
         .from("app_users")
@@ -177,7 +302,6 @@ export const adminProcessWithdraw = createServerFn({ method: "POST" })
       })
       .eq("id", data.id);
 
-    // notify user
     const { data: settings } = await supabaseAdmin
       .from("app_settings")
       .select("key,value")
@@ -204,26 +328,91 @@ export const adminProcessWithdraw = createServerFn({ method: "POST" })
 
 export const adminUpdateUser = createServerFn({ method: "POST" })
   .inputValidator(
-    (d: { password: string; chatId: string; points?: number; banned?: boolean }) =>
+    (d: { password: string; chatId: string; points?: number; banned?: boolean; flagged?: boolean }) =>
       z
         .object({
           password: z.string().min(1).max(100),
           chatId: z.string().min(1).max(32),
           points: z.number().int().min(0).max(1_000_000_000).optional(),
           banned: z.boolean().optional(),
+          flagged: z.boolean().optional(),
         })
         .parse(d),
   )
   .handler(async ({ data }) => {
     await verifyAdmin(data.password);
-    const patch: { points?: number; banned?: boolean } = {};
+    const patch: { points?: number; banned?: boolean; flagged?: boolean } = {};
     if (data.points !== undefined) patch.points = data.points;
     if (data.banned !== undefined) patch.banned = data.banned;
+    if (data.flagged !== undefined) patch.flagged = data.flagged;
     if (Object.keys(patch).length === 0) return { ok: true };
     const { error } = await supabaseAdmin
       .from("app_users")
       .update(patch)
       .eq("chat_id", data.chatId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// -------- Task CRUD --------
+
+export const adminSaveTask = createServerFn({ method: "POST" })
+  .inputValidator(
+    (d: {
+      password: string;
+      task: {
+        id?: string;
+        title: string;
+        description?: string;
+        icon?: string;
+        url?: string;
+        reward_points: number;
+        task_type: string;
+        verify_method: string;
+        channel_username?: string;
+        active: boolean;
+        sort_order: number;
+      };
+    }) =>
+      z
+        .object({
+          password: z.string().min(1).max(100),
+          task: z.object({
+            id: z.string().uuid().optional(),
+            title: z.string().trim().min(1).max(120),
+            description: z.string().max(500).optional(),
+            icon: z.string().max(10).optional(),
+            url: z.string().max(500).optional(),
+            reward_points: z.number().int().positive().max(1_000_000),
+            task_type: z.enum(["join_channel", "visit_url", "custom"]),
+            verify_method: z.enum(["auto", "manual", "telegram_member"]),
+            channel_username: z.string().max(64).optional(),
+            active: z.boolean(),
+            sort_order: z.number().int(),
+          }),
+        })
+        .parse(d),
+  )
+  .handler(async ({ data }) => {
+    await verifyAdmin(data.password);
+    const payload = data.task;
+    if (payload.id) {
+      const { error } = await supabaseAdmin.from("tasks").update(payload).eq("id", payload.id);
+      if (error) throw new Error(error.message);
+    } else {
+      const { error } = await supabaseAdmin.from("tasks").insert(payload);
+      if (error) throw new Error(error.message);
+    }
+    return { ok: true };
+  });
+
+export const adminDeleteTask = createServerFn({ method: "POST" })
+  .inputValidator((d: { password: string; id: string }) =>
+    z.object({ password: z.string().min(1).max(100), id: z.string().uuid() }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    await verifyAdmin(data.password);
+    const { error } = await supabaseAdmin.from("tasks").delete().eq("id", data.id);
     if (error) throw new Error(error.message);
     return { ok: true };
   });
