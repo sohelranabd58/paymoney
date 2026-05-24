@@ -44,7 +44,14 @@ export const adminGetAll = createServerFn({ method: "POST" })
       supabaseAdmin.from("tasks").select("*").order("sort_order"),
     ]);
     const settingsMap: Record<string, string> = {};
-    for (const r of settings.data ?? []) settingsMap[r.key] = r.value;
+    for (const r of settings.data ?? []) {
+      if (r.key === "admin_password") continue; // never expose plaintext to browser
+      if (r.key === "bot_token" && r.value) {
+        settingsMap[r.key] = r.value.length > 8 ? r.value.slice(0, 6) + "***" : "***";
+        continue;
+      }
+      settingsMap[r.key] = r.value;
+    }
     return {
       settings: settingsMap,
       methods: methods.data ?? [],
@@ -190,11 +197,20 @@ export const adminUpdateSettings = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     await verifyAdmin(data.password);
-    const rows = Object.entries(data.settings).map(([key, value]) => ({
-      key,
-      value,
-      updated_at: new Date().toISOString(),
-    }));
+    const rows = Object.entries(data.settings)
+      // Don't overwrite secrets when admin leaves the field empty or unchanged (masked value ends with ***)
+      .filter(([key, value]) => {
+        if ((key === "admin_password" || key === "bot_token") && (value === "" || value.endsWith("***"))) {
+          return false;
+        }
+        return true;
+      })
+      .map(([key, value]) => ({
+        key,
+        value,
+        updated_at: new Date().toISOString(),
+      }));
+    if (rows.length === 0) return { ok: true };
     const { error } = await supabaseAdmin.from("app_settings").upsert(rows, { onConflict: "key" });
     if (error) throw new Error(error.message);
     return { ok: true };
@@ -382,7 +398,13 @@ export const adminSaveTask = createServerFn({ method: "POST" })
             title: z.string().trim().min(1).max(120),
             description: z.string().max(500).optional(),
             icon: z.string().max(10).optional(),
-            url: z.string().max(500).optional(),
+            url: z
+              .string()
+              .max(500)
+              .url()
+              .refine((u) => /^https?:\/\//i.test(u), "URL must start with http:// or https://")
+              .optional()
+              .or(z.literal("").transform(() => undefined)),
             reward_points: z.number().int().positive().max(1_000_000),
             task_type: z.enum(["join_channel", "visit_url", "custom"]),
             verify_method: z.enum(["auto", "manual", "telegram_member"]),

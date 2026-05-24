@@ -302,7 +302,33 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      claim_ad_atomic: {
+        Args: {
+          p_ad_type: string
+          p_base_points: number
+          p_chat_id: string
+          p_cooldown: number
+          p_daily_limit: number
+          p_last_col: string
+          p_multiplier: number
+        }
+        Returns: {
+          earned: number
+          new_level: number
+          new_points: number
+          today_count: number
+        }[]
+      }
+      submit_withdraw_atomic: {
+        Args: {
+          p_account: string
+          p_amount: number
+          p_chat_id: string
+          p_method_id: string
+          p_method_name: string
+        }
+        Returns: string
+      }
     }
     Enums: {
       [_ in never]: never
