@@ -295,6 +295,7 @@ function SettingsTab({
         <h3 className="font-semibold">App branding</h3>
         <Field label="App name" value={form.app_name ?? ""} onChange={(v) => set("app_name", v)} />
         <Field label="Welcome message" value={form.welcome_message ?? ""} onChange={(v) => set("welcome_message", v)} />
+        <Field label="Marquee text (top scrolling banner)" value={form.marquee_text ?? ""} onChange={(v) => set("marquee_text", v)} placeholder="🔥 New rewards available! Invite friends..." />
       </Card>
 
       <Card className="space-y-4 p-5">
