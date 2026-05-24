@@ -44,7 +44,14 @@ export const adminGetAll = createServerFn({ method: "POST" })
       supabaseAdmin.from("tasks").select("*").order("sort_order"),
     ]);
     const settingsMap: Record<string, string> = {};
-    for (const r of settings.data ?? []) settingsMap[r.key] = r.value;
+    for (const r of settings.data ?? []) {
+      if (r.key === "admin_password") continue; // never expose plaintext to browser
+      if (r.key === "bot_token" && r.value) {
+        settingsMap[r.key] = r.value.length > 8 ? r.value.slice(0, 6) + "***" : "***";
+        continue;
+      }
+      settingsMap[r.key] = r.value;
+    }
     return {
       settings: settingsMap,
       methods: methods.data ?? [],
