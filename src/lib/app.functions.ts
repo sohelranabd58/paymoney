@@ -177,37 +177,11 @@ export const getUserState = createServerFn({ method: "POST" })
           ? Math.min(100, Math.round(((totalAds ?? 0) - current.min_ads) / (next.min_ads - current.min_ads) * 100))
           : 100,
       },
-      settings: {
-        app_name: settings.app_name ?? "Earn Rewards",
-        welcome_message: settings.welcome_message ?? "Watch ads and earn points!",
-        min_withdraw: Number(settings.min_withdraw ?? 1000),
-        zones: {
-          interstitial: {
-            zone: settings.zone_interstitial ?? "9518673",
-            sdk_id: `show_${settings.zone_interstitial ?? "9518673"}`,
-            points: Number(settings.points_interstitial ?? 10),
-            cooldown: Number(settings.cooldown_interstitial ?? 30),
-            limit: Number(settings.daily_limit_interstitial ?? 100),
-            today: intCount.count ?? 0,
-          },
-          popup: {
-            zone: settings.zone_popup ?? "9518673",
-            sdk_id: `show_${settings.zone_popup ?? "9518673"}`,
-            points: Number(settings.points_popup ?? 5),
-            cooldown: Number(settings.cooldown_popup ?? 60),
-            limit: Number(settings.daily_limit_popup ?? 50),
-            today: popCount.count ?? 0,
-          },
-          inapp: {
-            zone: settings.zone_inapp ?? "9518673",
-            sdk_id: `show_${settings.zone_inapp ?? "9518673"}`,
-            points: Number(settings.points_inapp ?? 3),
-            cooldown: Number(settings.cooldown_inapp ?? 120),
-            limit: Number(settings.daily_limit_inapp ?? 30),
-            today: inappCount.count ?? 0,
-          },
-        },
-      },
+      settings: buildZonesAndMeta(settings, {
+        interstitial: intCount.count ?? 0,
+        popup: popCount.count ?? 0,
+        inapp: inappCount.count ?? 0,
+      }),
     };
   });
 
