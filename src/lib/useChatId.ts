@@ -9,8 +9,9 @@ declare global {
           user?: { id?: number };
           chat?: { id?: number };
         };
-        ready?: () => void;
-        expand?: () => void;
+        ready: () => void;
+        expand: () => void;
+        HapticFeedback?: { notificationOccurred: (t: string) => void };
       };
     };
   }
