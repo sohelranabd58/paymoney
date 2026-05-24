@@ -268,43 +268,16 @@ export const submitWithdraw = createServerFn({ method: "POST" })
     const minAmount = Math.max(globalMin, Number(method.min_amount));
     if (data.amount < minAmount) throw new Error(`Minimum withdraw is ${minAmount} points`);
 
-    const { data: user, error: ue } = await supabaseAdmin
-      .from("app_users")
-      .select("*")
-      .eq("chat_id", data.chatId)
-      .single();
-    if (ue || !user) throw new Error("User not found");
-    if (user.banned) throw new Error("Account banned");
-    if (user.flagged) throw new Error("Account flagged");
-    if (Number(user.points) < data.amount) throw new Error("Insufficient points");
-
-    const { count: pendingCount } = await supabaseAdmin
-      .from("withdraw_requests")
-      .select("*", { count: "exact", head: true })
-      .eq("chat_id", data.chatId)
-      .eq("status", "pending");
-    if ((pendingCount ?? 0) > 0) {
-      throw new Error("You already have a pending withdraw request");
-    }
-
-    await supabaseAdmin
-      .from("app_users")
-      .update({ points: Number(user.points) - data.amount })
-      .eq("chat_id", data.chatId);
-
-    const { data: req, error: re } = await supabaseAdmin
-      .from("withdraw_requests")
-      .insert({
-        chat_id: data.chatId,
-        method_id: method.id,
-        method_name: method.name,
-        account: data.account,
-        amount: data.amount,
-        status: "pending",
-      })
-      .select()
-      .single();
-    if (re) throw new Error(re.message);
+    // Atomic: row-lock user, check ban/flag/points, deduct, insert request (unique partial index prevents duplicate pending)
+    const { data: newId, error: rpcErr } = await supabaseAdmin.rpc("submit_withdraw_atomic", {
+      p_chat_id: data.chatId,
+      p_method_id: method.id,
+      p_method_name: method.name,
+      p_account: data.account,
+      p_amount: data.amount,
+    });
+    if (rpcErr) throw new Error(rpcErr.message);
+    const req = { id: newId as string, status: "pending" as const };
 
     const botToken = settings.bot_token;
     const adminChat = settings.admin_chat_id;
