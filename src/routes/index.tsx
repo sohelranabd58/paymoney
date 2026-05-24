@@ -21,17 +21,6 @@ export const Route = createFileRoute("/")({
   }),
 });
 
-declare global {
-  interface Window {
-    Telegram?: {
-      WebApp?: {
-        ready: () => void;
-        expand: () => void;
-        HapticFeedback?: { notificationOccurred: (t: string) => void };
-      };
-    };
-  }
-}
 
 type AdType = "interstitial" | "popup" | "inapp";
 
