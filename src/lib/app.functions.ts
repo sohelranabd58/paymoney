@@ -199,68 +199,39 @@ export const claimAdReward = createServerFn({ method: "POST" })
       },
     }[type];
 
-    const { data: user, error: ue } = await supabaseAdmin
-      .from("app_users")
-      .select("*")
-      .eq("chat_id", data.chatId)
-      .single();
-    if (ue || !user) throw new Error("User not found");
-    if (user.banned) throw new Error("Account banned");
-    if (user.flagged) throw new Error("Account flagged for suspicious activity");
-
-    const lastTs = (user as Record<string, unknown>)[cfg.lastCol] as string | null;
-    if (lastTs) {
-      const diff = (Date.now() - new Date(lastTs).getTime()) / 1000;
-      if (diff < cfg.cooldown) {
-        throw new Error(`Wait ${Math.ceil(cfg.cooldown - diff)}s before next ad`);
-      }
-    }
-
-    const since = new Date();
-    since.setUTCHours(0, 0, 0, 0);
-    const { count } = await supabaseAdmin
-      .from("ad_watches")
-      .select("*", { count: "exact", head: true })
-      .eq("chat_id", data.chatId)
-      .eq("ad_type", type)
-      .gte("watched_at", since.toISOString());
-    if ((count ?? 0) >= cfg.limit) {
-      throw new Error(`Daily limit reached for this ad type. Try again tomorrow!`);
-    }
-
-    // level multiplier
+    // Fetch user lightweight info for level calc (the atomic RPC enforces cooldown/limit/ban itself)
     const { count: totalAds } = await supabaseAdmin
       .from("ad_watches")
       .select("*", { count: "exact", head: true })
       .eq("chat_id", data.chatId);
     const levels = parseLevels(settings.levels_json);
     const { current } = computeLevel(levels, totalAds ?? 0);
-    const earned = Math.round(cfg.points * (current.multiplier ?? 1));
 
-    const newPoints = Number(user.points) + earned;
-    const newTotal = Number(user.total_earned) + earned;
-    const nowIso = new Date().toISOString();
-
-    const patch = {
-      points: newPoints,
-      total_earned: newTotal,
-      level: current.level,
-      [cfg.lastCol]: nowIso,
-    } as { points: number; total_earned: number; level: number; last_ad_at?: string; last_popup_at?: string; last_inapp_at?: string };
-
-    const { error: ue2 } = await supabaseAdmin
-      .from("app_users")
-      .update(patch)
-      .eq("chat_id", data.chatId);
-    if (ue2) throw new Error(ue2.message);
-
-    await supabaseAdmin.from("ad_watches").insert({
-      chat_id: data.chatId,
-      points: earned,
-      ad_type: type,
+    const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc("claim_ad_atomic", {
+      p_chat_id: data.chatId,
+      p_ad_type: type,
+      p_cooldown: cfg.cooldown,
+      p_daily_limit: cfg.limit,
+      p_base_points: cfg.points,
+      p_multiplier: current.multiplier ?? 1,
+      p_last_col: cfg.lastCol,
     });
+    if (rpcErr) throw new Error(rpcErr.message);
+    const row = Array.isArray(rpcData) ? rpcData[0] : rpcData;
+    if (!row) throw new Error("Claim failed");
 
-    return { points: newPoints, earned, today: (count ?? 0) + 1, level: current };
+    // Update level if changed
+    await supabaseAdmin
+      .from("app_users")
+      .update({ level: current.level })
+      .eq("chat_id", data.chatId);
+
+    return {
+      points: Number(row.new_points),
+      earned: Number(row.earned),
+      today: Number(row.today_count),
+      level: current,
+    };
   });
 
 export const listWithdrawMethods = createServerFn({ method: "GET" }).handler(async () => {
