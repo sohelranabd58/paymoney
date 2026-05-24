@@ -197,11 +197,20 @@ export const adminUpdateSettings = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     await verifyAdmin(data.password);
-    const rows = Object.entries(data.settings).map(([key, value]) => ({
-      key,
-      value,
-      updated_at: new Date().toISOString(),
-    }));
+    const rows = Object.entries(data.settings)
+      // Don't overwrite secrets when admin leaves the field empty or unchanged (masked value ends with ***)
+      .filter(([key, value]) => {
+        if ((key === "admin_password" || key === "bot_token") && (value === "" || value.endsWith("***"))) {
+          return false;
+        }
+        return true;
+      })
+      .map(([key, value]) => ({
+        key,
+        value,
+        updated_at: new Date().toISOString(),
+      }));
+    if (rows.length === 0) return { ok: true };
     const { error } = await supabaseAdmin.from("app_settings").upsert(rows, { onConflict: "key" });
     if (error) throw new Error(error.message);
     return { ok: true };
