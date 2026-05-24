@@ -398,7 +398,13 @@ export const adminSaveTask = createServerFn({ method: "POST" })
             title: z.string().trim().min(1).max(120),
             description: z.string().max(500).optional(),
             icon: z.string().max(10).optional(),
-            url: z.string().max(500).optional(),
+            url: z
+              .string()
+              .max(500)
+              .url()
+              .refine((u) => /^https?:\/\//i.test(u), "URL must start with http:// or https://")
+              .optional()
+              .or(z.literal("").transform(() => undefined)),
             reward_points: z.number().int().positive().max(1_000_000),
             task_type: z.enum(["join_channel", "visit_url", "custom"]),
             verify_method: z.enum(["auto", "manual", "telegram_member"]),
