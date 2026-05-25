@@ -1,96 +1,63 @@
-# Advanced Upgrade Plan
+## Goal
+Home page o Tasks page alada koro. Home = profile + stats only. Earn = ads. Tasks = offerwall.
 
-Existing app (Monetag Telegram mini app + admin panel) ke advanced banano hobe. UI improved hobe (current style rakhbo, polish + Tasks/Daily sections add hobe).
+## Changes
 
-## 1. Multiple Ad Types (3 Monetag zones)
+### 1. Database migration
+`app_users` table e notun column add:
+- `tg_username` text
+- `tg_first_name` text  
+- `tg_last_name` text
+- `tg_photo_url` text
+- `tg_profile_synced_at` timestamptz
 
-Monetag er 3 ta format alada button hisebe:
+### 2. New server function: `syncTelegramProfile(chatId)` in `src/lib/app.functions.ts`
+- `bot_token` settings theke nibe
+- Telegram Bot API call:
+  - `getChat?chat_id={chatId}` → first_name, last_name, username
+  - `getUserProfilePhotos?user_id={chatId}&limit=1` → photo file_id
+  - `getFile?file_id=...` → file_path
+  - Final URL: `https://api.telegram.org/file/bot{token}/{file_path}` — eta server side e fetch kore base64/data URL hisebe save korbo na; shudhu URL ta DB te store korbo (token expose hobe na karon eta server theke render hobe na, but link e token thake — better option: download kore Supabase storage te save kora, OR proxy route)
+- **Choice**: Notun public storage bucket `tg-avatars` banabo, photo download kore `{chatId}.jpg` hisebe upload korbo, then public URL `tg_photo_url` te save
+- Cache: 24 ghonta er beshi hole re-sync, otherwise skip
+- `getUserState` first call e auto trigger korbe (background, non-blocking)
 
-| Type | SDK function | Default zone | Default points |
-|---|---|---|---|
-| Rewarded Interstitial | `show_<zone>()` | 9518673 | 10 |
-| Rewarded Popup | `show_<zone>('pop')` | (admin set) | 5 |
-| In-App Interstitial | auto / timer-based | (admin set) | 3 (auto credit) |
+### 3. New route: `src/routes/earn.tsx`
+- Existing `EarnScreen` content (ad cards: Interstitial, Popup, In-app) move here
+- Header simple: app name + points badge
+- Guest mode support same way
 
-- Home page e 2 ta section: **Tasks** (Interstitial + Popup — Claim button) ar **Daily** (In-App auto).
-- Each type er alada cooldown + daily limit (admin controlled).
-- DB e `ad_watches.ad_type` column add hobe.
+### 4. Rewrite `src/routes/index.tsx` (Home)
+Logged-in view:
+- Big profile card: avatar (tg_photo_url or fallback initial), first_name + last_name, @username
+- Points big display, Lifetime + ads watched
+- Level card with progress bar
+- VIP multiplier badge
+- Quick action shortcut grid: Earn, Tasks, Withdraw, History (4 cards, big icons)
+- Marquee at top
 
-## 2. Tasks / Offerwall System
+Guest view:
+- Generic avatar + "Guest" label
+- Same stats from localStorage
+- Same quick action grid (Earn, Tasks disabled/limited)
 
-Admin custom task add korte parbe (Telegram channel join, group join, bot start, custom URL visit).
+### 5. Update `BottomNav.tsx`
+5 tabs: Home, Earn (Zap icon), Tasks, Withdraw, History
+OR 4 tabs (replace Home behavior): Home, Earn, Tasks, Withdraw — History move to Home quick actions
+**Recommended: 5 tabs** for clarity
 
-- Table `tasks`: id, title, description, icon, url, reward_points, task_type (`join_channel` | `visit_url` | `custom`), verify_method (`auto` | `manual` | `telegram_member`), channel_username (nullable), active, sort_order.
-- Table `task_completions`: id, chat_id, task_id, status (`pending`/`approved`/`rejected`), completed_at.
-- User flow: Task list → click → opens URL → "I've done it" button → server verifies (Telegram `getChatMember` for channels, auto-approve for url) → points credited.
-- Admin can add/edit/delete tasks + approve manual ones.
+### 6. Return shape updates
+`getUserState` returns user object — add `tg_username`, `tg_first_name`, `tg_last_name`, `tg_photo_url` fields.
 
-## 3. VIP / Level System
+### 7. Storage bucket
+Create public bucket `tg-avatars` via migration with public read policy.
 
-User more ads = higher level = more points per ad (multiplier).
+## Files touched
+- `supabase/migrations/...sql` (new) — columns + storage bucket
+- `src/lib/app.functions.ts` — add `syncTelegramProfile`, update `getUserState` return shape
+- `src/routes/index.tsx` — rewrite as profile/home dashboard
+- `src/routes/earn.tsx` (new) — ad-watching screen
+- `src/components/BottomNav.tsx` — add Earn tab
 
-- Levels stored in `app_settings` as JSON: `[{level:1,min_ads:0,multiplier:1.0,name:"Bronze"},{level:2,min_ads:100,multiplier:1.2,name:"Silver"},...]`
-- `app_users` e `level` column add (computed on each ad claim).
-- Home page e current level badge + progress bar (next level kotodur).
-- Admin edit kortay parbe levels JSON.
-
-## 4. Anti-Fraud
-
-- Table `user_devices`: chat_id, ip, user_agent, fingerprint, created_at.
-- On `getUserState`: capture IP (from request headers) + UA.
-- If same IP/UA already linked to different chat_id beyond limit (default 3) → flag user + block ad claims.
-- Admin panel e flagged users list, manual unblock.
-- Settings: `max_accounts_per_ip` (default 3), `anti_fraud_enabled` (true/false).
-
-## 5. Statistics Dashboard (Admin)
-
-New tab `Stats` admin dashboard e:
-- Total users, active today, total ads watched, ads today, total points earned, total withdrawn (approved), pending withdrawals, total tasks completed.
-- Simple line chart (Recharts) — last 7 days: new users, ads watched, withdrawals.
-- Top 10 earners table.
-
-## 6. UI — Inspired but Improved
-
-Current dark theme rakhbo + polish:
-- Home: gradient header (balance + level badge + progress), then **Tasks** section (3 ad cards with emoji + Claim), then **Daily** section (in-app + check-in if exists), then **Offers** section (custom tasks list).
-- Bottom nav: 4 tabs — Home, Stats (personal earnings chart), Withdraw, History. (Leaderboard skip kora hocche unless chao.)
-- Smooth animations, glassmorphism cards, better typography.
-- Mobile-first (360px viewport optimized).
-
-## 7. Admin Panel Additions
-
-New tabs:
-- **Stats** — overview dashboard
-- **Tasks** — CRUD for custom tasks
-- **Ad Zones** — 3 alada zone id (interstitial / popup / inapp) + points per type + cooldown per type + daily limit per type
-- **Levels** — JSON editor for VIP tiers
-- **Anti-fraud** — flagged users list, settings
-
-Existing tabs (Settings / Methods / Withdraws / Users) thakbe.
-
-## Technical Plan
-
-**DB migrations:**
-1. `ALTER TABLE ad_watches ADD COLUMN ad_type text DEFAULT 'interstitial';`
-2. `ALTER TABLE app_users ADD COLUMN level int DEFAULT 1, ADD COLUMN flagged boolean DEFAULT false, ADD COLUMN last_ip text, ADD COLUMN last_ua text;`
-3. Create `tasks`, `task_completions`, `user_devices` tables (RLS enabled, no public policies — admin client only).
-4. Seed new settings keys: `zone_interstitial`, `zone_popup`, `zone_inapp`, `points_interstitial`, `points_popup`, `points_inapp`, `cooldown_interstitial`, `cooldown_popup`, `cooldown_inapp`, `daily_limit_interstitial`, `daily_limit_popup`, `daily_limit_inapp`, `levels_json`, `max_accounts_per_ip`, `anti_fraud_enabled`.
-
-**Server functions (new/updated):**
-- `claimAdReward({chatId, adType})` — type-specific cooldown/limit/points, level multiplier, anti-fraud check
-- `listTasks(chatId)` — tasks + completion status
-- `claimTask({chatId, taskId})` — verify + credit
-- `getStats()` (admin) — aggregates
-- `adminSaveTask`, `adminDeleteTask`
-- `adminGetFlagged`, `adminUnflagUser`
-- Update `getUserState` to return all 3 zone configs + level info + IP capture
-
-**Frontend:**
-- Rewrite `src/routes/index.tsx` with Tasks/Daily/Offers sections
-- New `src/routes/stats.tsx` (user personal stats)
-- Add tabs in `src/routes/admin.dashboard.tsx`: Stats, Tasks, Ad Zones, Levels, Anti-fraud
-- Recharts install for charts
-
-**Out of scope (ask if needed later):** Referral system, daily check-in, leaderboard public page, multi-language, broadcast.
-
-Approve korle implementation start korbo.
+## Open question
+History tab BottomNav e rakhbo na quick action e shorabo? Default plan: 5 tabs rakhi (Home, Earn, Tasks, Withdraw, History).
