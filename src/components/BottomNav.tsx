@@ -1,10 +1,11 @@
 import { Link, useLocation } from "@tanstack/react-router";
-import { Home, Wallet, History, ListChecks } from "lucide-react";
+import { Home, Wallet, History, ListChecks, Zap } from "lucide-react";
 
 export function BottomNav({ chatId }: { chatId: string }) {
   const { pathname } = useLocation();
   const items = [
     { to: "/", label: "Home", icon: Home },
+    { to: "/earn", label: "Earn", icon: Zap },
     { to: "/tasks", label: "Tasks", icon: ListChecks },
     { to: "/withdraw", label: "Withdraw", icon: Wallet },
     { to: "/history", label: "History", icon: History },
@@ -12,7 +13,7 @@ export function BottomNav({ chatId }: { chatId: string }) {
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-30 border-t border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
-      <div className="mx-auto grid max-w-md grid-cols-4">
+      <div className="mx-auto grid max-w-md grid-cols-5">
         {items.map((it) => {
           const active = pathname === it.to;
           const Icon = it.icon;
@@ -21,7 +22,7 @@ export function BottomNav({ chatId }: { chatId: string }) {
               key={it.to}
               to={it.to}
               search={{ id: chatId }}
-              className={`flex flex-col items-center gap-1 py-3 text-[11px] transition-colors ${
+              className={`flex flex-col items-center gap-1 py-3 text-[10px] transition-colors ${
                 active ? "text-primary" : "text-muted-foreground hover:text-foreground"
               }`}
             >
