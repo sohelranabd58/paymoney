@@ -1,0 +1,286 @@
+import { useServerFn } from "@tanstack/react-start";
+import { createFileRoute } from "@tanstack/react-router";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { Coins, Sparkles, Trophy, UserCircle2 } from "lucide-react";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { BottomNav } from "@/components/BottomNav";
+import { useChatIdFromSearch } from "@/lib/useChatId";
+import { getUserState, claimAdReward, getPublicConfig } from "@/lib/app.functions";
+import {
+  Marquee, useMonetagSdks, playAd, SectionTitle, AdCard, LoadingScreen, ErrorScreen,
+} from "@/components/earn-ui";
+
+export const Route = createFileRoute("/earn")({
+  component: EarnPage,
+  head: () => ({
+    meta: [
+      { title: "Earn — Watch Ads" },
+      { name: "description", content: "Watch ads and earn points." },
+    ],
+  }),
+});
+
+type AdType = "interstitial" | "popup" | "inapp";
+
+function EarnPage() {
+  const chatId = useChatIdFromSearch();
+  useEffect(() => {
+    try {
+      window.Telegram?.WebApp?.ready();
+      window.Telegram?.WebApp?.expand();
+    } catch {}
+  }, []);
+  return chatId ? <EarnLoggedIn chatId={chatId} /> : <EarnGuest />;
+}
+
+function EarnHeader({
+  appName, points, totalEarned, totalAds, badge,
+}: { appName: string; points: number; totalEarned: number; totalAds: number; badge: React.ReactNode }) {
+  return (
+    <header className="relative overflow-hidden border-b border-border/40 bg-gradient-to-br from-primary/30 via-card to-background pb-6 pt-5">
+      <div className="absolute inset-0 -z-0 bg-[radial-gradient(circle_at_30%_20%,oklch(0.7_0.18_155/.25),transparent_60%)]" />
+      <div className="relative z-10 mx-auto max-w-md px-4">
+        <div className="flex items-center justify-between">
+          <div className="text-xs font-medium text-muted-foreground">{appName}</div>
+          {badge}
+        </div>
+        <div className="mt-4 flex items-end gap-2">
+          <Coins className="mb-1.5 h-6 w-6 text-primary" />
+          <div className="text-5xl font-bold tracking-tight">{points.toLocaleString()}</div>
+          <div className="mb-2 text-xs text-muted-foreground">pts</div>
+        </div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          Lifetime: {totalEarned.toLocaleString()} · {totalAds} ads watched
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function EarnLoggedIn({ chatId }: { chatId: string }) {
+  const qc = useQueryClient();
+  const fetchState = useServerFn(getUserState);
+  const claim = useServerFn(claimAdReward);
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["userState", chatId],
+    queryFn: () => fetchState({ data: { chatId } }),
+    refetchOnWindowFocus: false,
+  });
+
+  const loadedSdks = useMonetagSdks(data?.settings.zones);
+
+  const claimMut = useMutation({
+    mutationFn: (adType: AdType) => claim({ data: { chatId, adType } }),
+    onSuccess: (res) => {
+      toast.success(`+${res.earned} points!`, { icon: <Sparkles className="h-4 w-4" /> });
+      try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred("success"); } catch {}
+      qc.invalidateQueries({ queryKey: ["userState", chatId] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const watchAd = useCallback(async (adType: AdType, sdkId: string, popup: boolean) => {
+    if (!loadedSdks.has(sdkId)) { toast.error("Ad SDK loading... try again"); return; }
+    try { await playAd(sdkId, popup); claimMut.mutate(adType); }
+    catch (e) { toast.error(e instanceof Error ? e.message : "Ad failed"); }
+  }, [loadedSdks, claimMut]);
+
+  if (isLoading) return <LoadingScreen />;
+  if (error) return <ErrorScreen message={(error as Error).message} />;
+  if (!data) return null;
+
+  const { user, level, settings } = data;
+  const z = settings.zones;
+
+  return (
+    <div className="min-h-screen pb-24">
+      <Marquee text={settings.marquee_text} />
+      <EarnHeader
+        appName={settings.app_name}
+        points={user.points}
+        totalEarned={user.total_earned}
+        totalAds={user.total_ads}
+        badge={
+          <Badge variant="secondary" className="gap-1 text-[10px]">
+            <Trophy className="h-3 w-3" /> {level.current.name} ×{level.current.multiplier}
+          </Badge>
+        }
+      />
+
+      <main className="mx-auto max-w-md space-y-5 px-4 py-5">
+        {user.flagged && (
+          <Card className="border-destructive/50 bg-destructive/10 p-3 text-xs">
+            ⚠️ Your account has been flagged. Contact admin.
+          </Card>
+        )}
+        <section>
+          <SectionTitle>Rewarded Ads</SectionTitle>
+          <p className="mb-3 px-1 text-xs text-muted-foreground">Get rewards for actions</p>
+          <div className="space-y-2">
+            <AdCard emoji="🤩" title="Watch short ads" subtitle="Rewarded Interstitial"
+              points={z.interstitial.points} today={z.interstitial.today} limit={z.interstitial.limit}
+              lastAt={user.last_ad_at} cooldown={z.interstitial.cooldown}
+              loading={claimMut.isPending && claimMut.variables === "interstitial"}
+              sdkReady={loadedSdks.has(z.interstitial.sdk_id)}
+              onClick={() => watchAd("interstitial", z.interstitial.sdk_id, false)}
+              banned={user.banned || user.flagged} />
+            <AdCard emoji="😎" title="Click to get reward" subtitle="Rewarded Popup"
+              points={z.popup.points} today={z.popup.today} limit={z.popup.limit}
+              lastAt={user.last_popup_at} cooldown={z.popup.cooldown}
+              loading={claimMut.isPending && claimMut.variables === "popup"}
+              sdkReady={loadedSdks.has(z.popup.sdk_id)}
+              onClick={() => watchAd("popup", z.popup.sdk_id, true)}
+              banned={user.banned || user.flagged} />
+          </div>
+        </section>
+        <section>
+          <SectionTitle>Daily</SectionTitle>
+          <p className="mb-3 px-1 text-xs text-muted-foreground">After time actions</p>
+          <AdCard emoji="👀" title="Watch video" subtitle="In-App Interstitial"
+            points={z.inapp.points} today={z.inapp.today} limit={z.inapp.limit}
+            lastAt={user.last_inapp_at} cooldown={z.inapp.cooldown}
+            loading={claimMut.isPending && claimMut.variables === "inapp"}
+            sdkReady={loadedSdks.has(z.inapp.sdk_id)}
+            onClick={() => watchAd("inapp", z.inapp.sdk_id, false)}
+            banned={user.banned || user.flagged} />
+        </section>
+        {user.points >= settings.min_withdraw && (
+          <Card className="border-success/40 bg-success/10 p-3 text-center text-xs text-success">
+            ✓ You can withdraw now (min {settings.min_withdraw} pts)
+          </Card>
+        )}
+      </main>
+
+      <BottomNav chatId={chatId} />
+    </div>
+  );
+}
+
+function EarnGuest() {
+  const fetchCfg = useServerFn(getPublicConfig);
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["publicConfig"],
+    queryFn: () => fetchCfg(),
+    refetchOnWindowFocus: false,
+  });
+
+  const [points, setPoints] = useState(0);
+  const [totalEarned, setTotalEarned] = useState(0);
+  const [totalAds, setTotalAds] = useState(0);
+  const [todayCounts, setTodayCounts] = useState<Record<AdType, number>>({ interstitial: 0, popup: 0, inapp: 0 });
+  const [lastAt, setLastAt] = useState<Record<AdType, string | null>>({ interstitial: null, popup: null, inapp: null });
+  const [pendingType, setPendingType] = useState<AdType | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("guest_state_v1");
+      if (!raw) return;
+      const s = JSON.parse(raw);
+      const today = new Date().toISOString().slice(0, 10);
+      setPoints(s.points ?? 0);
+      setTotalEarned(s.totalEarned ?? 0);
+      setTotalAds(s.totalAds ?? 0);
+      setTodayCounts(s.day === today ? (s.todayCounts ?? { interstitial: 0, popup: 0, inapp: 0 }) : { interstitial: 0, popup: 0, inapp: 0 });
+      setLastAt(s.lastAt ?? { interstitial: null, popup: null, inapp: null });
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("guest_state_v1", JSON.stringify({
+        points, totalEarned, totalAds, todayCounts, lastAt,
+        day: new Date().toISOString().slice(0, 10),
+      }));
+    } catch {}
+  }, [points, totalEarned, totalAds, todayCounts, lastAt]);
+
+  const loadedSdks = useMonetagSdks(data?.settings.zones);
+
+  const levelInfo = useMemo(() => {
+    if (!data) return null;
+    const sorted = [...data.levels].sort((a, b) => a.min_ads - b.min_ads);
+    let current = sorted[0];
+    for (let i = 0; i < sorted.length; i++) {
+      if (totalAds >= sorted[i].min_ads) { current = sorted[i]; }
+    }
+    return { current };
+  }, [data, totalAds]);
+
+  const watch = useCallback(async (adType: AdType, popup: boolean) => {
+    if (!data) return;
+    const z = data.settings.zones[adType];
+    if (!loadedSdks.has(z.sdk_id)) { toast.error("Ad SDK loading..."); return; }
+    setPendingType(adType);
+    try {
+      await playAd(z.sdk_id, popup);
+      const reward = Math.round(z.points * (levelInfo?.current.multiplier ?? 1));
+      setPoints((p) => p + reward);
+      setTotalEarned((p) => p + reward);
+      setTotalAds((p) => p + 1);
+      setTodayCounts((c) => ({ ...c, [adType]: c[adType] + 1 }));
+      setLastAt((l) => ({ ...l, [adType]: new Date().toISOString() }));
+      toast.success(`+${reward} points (guest)`, { icon: <Sparkles className="h-4 w-4" /> });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ad failed");
+    } finally {
+      setPendingType(null);
+    }
+  }, [data, loadedSdks, levelInfo]);
+
+  if (isLoading) return <LoadingScreen />;
+  if (error || !data) return <ErrorScreen message={(error as Error)?.message ?? "Failed to load"} />;
+
+  const z = data.settings.zones;
+  const s = data.settings;
+
+  return (
+    <div className="min-h-screen pb-24">
+      <Marquee text={s.marquee_text} />
+      <EarnHeader
+        appName={s.app_name}
+        points={points}
+        totalEarned={totalEarned}
+        totalAds={totalAds}
+        badge={
+          <Badge variant="outline" className="gap-1 text-[10px]">
+            <UserCircle2 className="h-3 w-3" /> Guest mode
+          </Badge>
+        }
+      />
+      <main className="mx-auto max-w-md space-y-5 px-4 py-5">
+        <Card className="border-warning/40 bg-warning/10 p-2.5 text-[11px] text-warning">
+          ⚠️ Open from the Telegram bot to save points & withdraw. In guest mode points are not stored.
+        </Card>
+        <section>
+          <SectionTitle>Rewarded Ads</SectionTitle>
+          <div className="mt-3 space-y-2">
+            <AdCard emoji="🤩" title="Watch short ads" subtitle="Rewarded Interstitial"
+              points={z.interstitial.points} today={todayCounts.interstitial} limit={z.interstitial.limit}
+              lastAt={lastAt.interstitial} cooldown={z.interstitial.cooldown}
+              loading={pendingType === "interstitial"} sdkReady={loadedSdks.has(z.interstitial.sdk_id)} banned={false}
+              onClick={() => watch("interstitial", false)} />
+            <AdCard emoji="😎" title="Click to get reward" subtitle="Rewarded Popup"
+              points={z.popup.points} today={todayCounts.popup} limit={z.popup.limit}
+              lastAt={lastAt.popup} cooldown={z.popup.cooldown}
+              loading={pendingType === "popup"} sdkReady={loadedSdks.has(z.popup.sdk_id)} banned={false}
+              onClick={() => watch("popup", true)} />
+          </div>
+        </section>
+        <section>
+          <SectionTitle>Daily</SectionTitle>
+          <div className="mt-3">
+            <AdCard emoji="👀" title="Watch video" subtitle="In-App Interstitial"
+              points={z.inapp.points} today={todayCounts.inapp} limit={z.inapp.limit}
+              lastAt={lastAt.inapp} cooldown={z.inapp.cooldown}
+              loading={pendingType === "inapp"} sdkReady={loadedSdks.has(z.inapp.sdk_id)} banned={false}
+              onClick={() => watch("inapp", false)} />
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}

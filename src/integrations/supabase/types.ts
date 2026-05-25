@@ -77,6 +77,11 @@ export type Database = {
           last_ua: string | null
           level: number
           points: number
+          tg_first_name: string | null
+          tg_last_name: string | null
+          tg_photo_url: string | null
+          tg_profile_synced_at: string | null
+          tg_username: string | null
           total_earned: number
         }
         Insert: {
@@ -91,6 +96,11 @@ export type Database = {
           last_ua?: string | null
           level?: number
           points?: number
+          tg_first_name?: string | null
+          tg_last_name?: string | null
+          tg_photo_url?: string | null
+          tg_profile_synced_at?: string | null
+          tg_username?: string | null
           total_earned?: number
         }
         Update: {
@@ -105,6 +115,11 @@ export type Database = {
           last_ua?: string | null
           level?: number
           points?: number
+          tg_first_name?: string | null
+          tg_last_name?: string | null
+          tg_photo_url?: string | null
+          tg_profile_synced_at?: string | null
+          tg_username?: string | null
           total_earned?: number
         }
         Relationships: []

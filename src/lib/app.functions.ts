@@ -169,6 +169,11 @@ export const getUserState = createServerFn({ method: "POST" })
         last_popup_at: user.last_popup_at,
         last_inapp_at: user.last_inapp_at,
         total_ads: totalAds ?? 0,
+        tg_username: user.tg_username ?? null,
+        tg_first_name: user.tg_first_name ?? null,
+        tg_last_name: user.tg_last_name ?? null,
+        tg_photo_url: user.tg_photo_url ?? null,
+        tg_profile_synced_at: user.tg_profile_synced_at ?? null,
       },
       level: {
         current,
@@ -184,6 +189,124 @@ export const getUserState = createServerFn({ method: "POST" })
       }),
     };
   });
+
+// -------- Telegram profile sync --------
+export const syncTelegramProfile = createServerFn({ method: "POST" })
+  .inputValidator((d: { chatId: string; force?: boolean }) => ({
+    chatId: chatIdSchema.parse(d.chatId),
+    force: Boolean(d.force),
+  }))
+  .handler(async ({ data }) => {
+    const { data: existing } = await supabaseAdmin
+      .from("app_users")
+      .select("tg_profile_synced_at,tg_photo_url,tg_username,tg_first_name,tg_last_name")
+      .eq("chat_id", data.chatId)
+      .maybeSingle();
+    if (!existing) return { skipped: true, reason: "user_missing" };
+
+    // 24h cache
+    if (!data.force && existing.tg_profile_synced_at) {
+      const ageMs = Date.now() - new Date(existing.tg_profile_synced_at).getTime();
+      if (ageMs < 24 * 60 * 60 * 1000) {
+        return {
+          skipped: true,
+          reason: "fresh",
+          tg_username: existing.tg_username,
+          tg_first_name: existing.tg_first_name,
+          tg_last_name: existing.tg_last_name,
+          tg_photo_url: existing.tg_photo_url,
+        };
+      }
+    }
+
+    const settings = await getSettings();
+    const botToken = settings.bot_token;
+    if (!botToken) return { skipped: true, reason: "no_bot_token" };
+
+    const updates: {
+      tg_profile_synced_at: string;
+      tg_first_name?: string | null;
+      tg_last_name?: string | null;
+      tg_username?: string | null;
+      tg_photo_url?: string | null;
+    } = {
+      tg_profile_synced_at: new Date().toISOString(),
+    };
+
+
+    // 1) getChat for name/username
+    try {
+      const r = await fetch(
+        `https://api.telegram.org/bot${botToken}/getChat?chat_id=${encodeURIComponent(data.chatId)}`,
+      );
+      const j = (await r.json()) as {
+        ok: boolean;
+        result?: { first_name?: string; last_name?: string; username?: string };
+      };
+      if (j.ok && j.result) {
+        updates.tg_first_name = j.result.first_name ?? null;
+        updates.tg_last_name = j.result.last_name ?? null;
+        updates.tg_username = j.result.username ?? null;
+      }
+    } catch (e) {
+      console.error("getChat failed", e);
+    }
+
+    // 2) getUserProfilePhotos -> getFile -> download -> upload to storage
+    try {
+      const r = await fetch(
+        `https://api.telegram.org/bot${botToken}/getUserProfilePhotos?user_id=${encodeURIComponent(data.chatId)}&limit=1`,
+      );
+      const j = (await r.json()) as {
+        ok: boolean;
+        result?: { total_count: number; photos: Array<Array<{ file_id: string; width: number }>> };
+      };
+      const photos = j.result?.photos?.[0];
+      if (j.ok && photos && photos.length > 0) {
+        // pick largest
+        const best = photos.reduce((a, b) => (a.width >= b.width ? a : b));
+        const fr = await fetch(
+          `https://api.telegram.org/bot${botToken}/getFile?file_id=${encodeURIComponent(best.file_id)}`,
+        );
+        const fj = (await fr.json()) as { ok: boolean; result?: { file_path: string } };
+        const filePath = fj.result?.file_path;
+        if (fj.ok && filePath) {
+          const dl = await fetch(`https://api.telegram.org/file/bot${botToken}/${filePath}`);
+          if (dl.ok) {
+            const buf = new Uint8Array(await dl.arrayBuffer());
+            const ext = filePath.split(".").pop()?.toLowerCase() || "jpg";
+            const storagePath = `${data.chatId}.${ext}`;
+            const { error: upErr } = await supabaseAdmin.storage
+              .from("tg-avatars")
+              .upload(storagePath, buf, {
+                contentType: ext === "png" ? "image/png" : "image/jpeg",
+                upsert: true,
+              });
+            if (!upErr) {
+              const { data: pub } = supabaseAdmin.storage
+                .from("tg-avatars")
+                .getPublicUrl(storagePath);
+              // cache-bust
+              updates.tg_photo_url = `${pub.publicUrl}?v=${Date.now()}`;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error("photo sync failed", e);
+    }
+
+    await supabaseAdmin.from("app_users").update(updates).eq("chat_id", data.chatId);
+
+    return {
+      skipped: false,
+      tg_username: updates.tg_username ?? existing.tg_username,
+      tg_first_name: updates.tg_first_name ?? existing.tg_first_name,
+      tg_last_name: updates.tg_last_name ?? existing.tg_last_name,
+      tg_photo_url: updates.tg_photo_url ?? existing.tg_photo_url,
+    };
+  });
+
 
 export const claimAdReward = createServerFn({ method: "POST" })
   .inputValidator((d: { chatId: string; adType?: string }) => ({
