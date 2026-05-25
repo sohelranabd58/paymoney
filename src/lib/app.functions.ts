@@ -223,9 +223,16 @@ export const syncTelegramProfile = createServerFn({ method: "POST" })
     const botToken = settings.bot_token;
     if (!botToken) return { skipped: true, reason: "no_bot_token" };
 
-    const updates: Record<string, string | null> = {
+    const updates: {
+      tg_profile_synced_at: string;
+      tg_first_name?: string | null;
+      tg_last_name?: string | null;
+      tg_username?: string | null;
+      tg_photo_url?: string | null;
+    } = {
       tg_profile_synced_at: new Date().toISOString(),
     };
+
 
     // 1) getChat for name/username
     try {
