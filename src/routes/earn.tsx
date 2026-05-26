@@ -8,9 +8,9 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { BottomNav } from "@/components/BottomNav";
 import { useChatIdFromSearch } from "@/lib/useChatId";
-import { getUserState, claimAdReward, getPublicConfig } from "@/lib/app.functions";
+import { getUserState, claimAdReward, claimClickAdReward, getPublicConfig } from "@/lib/app.functions";
 import {
-  Marquee, useMonetagSdks, playAd, SectionTitle, AdCard, LoadingScreen, ErrorScreen,
+  Marquee, useMonetagSdks, playAd, SectionTitle, AdCard, ClickAdDialog, LoadingScreen, ErrorScreen,
 } from "@/components/earn-ui";
 
 export const Route = createFileRoute("/earn")({
