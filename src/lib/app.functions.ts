@@ -421,6 +421,8 @@ export const claimAdReward = createServerFn({ method: "POST" })
     const levels = parseLevels(settings.levels_json);
     const { current } = computeLevel(levels, totalAds ?? 0);
 
+    const clickEvery = Number(settings.click_ad_every ?? 10);
+
     const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc("claim_ad_atomic", {
       p_chat_id: data.chatId,
       p_ad_type: type,
@@ -429,6 +431,7 @@ export const claimAdReward = createServerFn({ method: "POST" })
       p_base_points: cfg.points,
       p_multiplier: current.multiplier ?? 1,
       p_last_col: cfg.lastCol,
+      p_click_every: clickEvery,
     });
     if (rpcErr) throw new Error(rpcErr.message);
     const row = Array.isArray(rpcData) ? rpcData[0] : rpcData;
@@ -442,9 +445,32 @@ export const claimAdReward = createServerFn({ method: "POST" })
 
     return {
       points: Number(row.new_points),
+      pending_points: Number(row.pending_points),
       earned: Number(row.earned),
       today: Number(row.today_count),
+      cycle_ads: Number(row.cycle_ads),
+      needs_click_ad: Boolean(row.needs_click_ad),
+      click_ad_points: Number(settings.click_ad_points ?? 50),
       level: current,
+    };
+  });
+
+export const claimClickAdReward = createServerFn({ method: "POST" })
+  .inputValidator((d: { chatId: string }) => ({ chatId: chatIdSchema.parse(d.chatId) }))
+  .handler(async ({ data }) => {
+    const settings = await getSettings();
+    const bonus = Number(settings.click_ad_points ?? 50);
+    const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc("claim_click_ad_atomic", {
+      p_chat_id: data.chatId,
+      p_bonus: bonus,
+    });
+    if (rpcErr) throw new Error(rpcErr.message);
+    const row = Array.isArray(rpcData) ? rpcData[0] : rpcData;
+    if (!row) throw new Error("Claim failed");
+    return {
+      points: Number(row.new_points),
+      moved: Number(row.moved),
+      bonus: Number(row.bonus),
     };
   });
 
