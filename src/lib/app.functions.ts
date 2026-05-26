@@ -226,7 +226,13 @@ export const saveTelegramProfile = createServerFn({ method: "POST" })
       .maybeSingle();
     if (!existing) return { skipped: true, reason: "user_missing" as const };
 
-    const updates: Record<string, string | null> = {
+    const updates: {
+      tg_first_name: string | null;
+      tg_last_name: string | null;
+      tg_username: string | null;
+      tg_profile_synced_at: string;
+      tg_photo_url?: string | null;
+    } = {
       tg_first_name: data.first_name ?? null,
       tg_last_name: data.last_name ?? null,
       tg_username: data.username ?? null,
