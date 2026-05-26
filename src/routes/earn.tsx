@@ -37,8 +37,8 @@ function EarnPage() {
 }
 
 function EarnHeader({
-  appName, points, totalEarned, totalAds, badge,
-}: { appName: string; points: number; totalEarned: number; totalAds: number; badge: React.ReactNode }) {
+  appName, points, pendingPoints, totalEarned, totalAds, badge,
+}: { appName: string; points: number; pendingPoints?: number; totalEarned: number; totalAds: number; badge: React.ReactNode }) {
   return (
     <header className="relative overflow-hidden border-b border-border/40 bg-gradient-to-br from-primary/30 via-card to-background pb-6 pt-5">
       <div className="absolute inset-0 -z-0 bg-[radial-gradient(circle_at_30%_20%,oklch(0.7_0.18_155/.25),transparent_60%)]" />
@@ -55,6 +55,11 @@ function EarnHeader({
         <div className="mt-1 text-xs text-muted-foreground">
           Lifetime: {totalEarned.toLocaleString()} · {totalAds} ads watched
         </div>
+        {pendingPoints !== undefined && pendingPoints > 0 && (
+          <div className="mt-2 inline-flex items-center gap-1 rounded-full border border-warning/40 bg-warning/10 px-2.5 py-1 text-[11px] font-medium text-warning">
+            ⏳ Pending: {pendingPoints.toLocaleString()} pts (claim via bonus ad)
+          </div>
+        )}
       </div>
     </header>
   );
