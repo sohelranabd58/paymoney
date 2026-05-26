@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, Megaphone, Zap, Clock, MousePointerClick } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { AlertCircle, Megaphone, Zap, Clock, MousePointerClick, Gift, Sparkles } from "lucide-react";
 
 export function Marquee({ text }: { text: string }) {
   if (!text.trim()) return null;
@@ -74,9 +75,10 @@ export function AdCard({
 
   const limitReached = today >= limit;
   const disabled = loading || left > 0 || limitReached || banned || !sdkReady;
+  const progress = cooldown > 0 ? Math.max(0, Math.min(100, ((cooldown - left) / cooldown) * 100)) : 100;
 
   return (
-    <Card className="flex items-center gap-3 overflow-hidden p-3">
+    <Card className="relative flex items-center gap-3 overflow-hidden p-3">
       <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-muted text-2xl">{emoji}</div>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-semibold">{title}</div>
@@ -91,7 +93,71 @@ export function AdCard({
         {loading ? "..." : left > 0 ? (<><Clock className="mr-1 h-3 w-3" />{left}s</>)
           : limitReached ? "Done" : !sdkReady ? "..." : (<><MousePointerClick className="mr-1 h-3 w-3" />Claim</>)}
       </Button>
+
+      {/* Cooldown overlay sitting on top of the ad card */}
+      {left > 0 && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
+          <div className="relative flex h-16 w-16 items-center justify-center">
+            <svg className="absolute inset-0 -rotate-90" viewBox="0 0 36 36">
+              <circle cx="18" cy="18" r="16" fill="none" stroke="oklch(0.3 0.02 240 / 0.4)" strokeWidth="3" />
+              <circle
+                cx="18" cy="18" r="16" fill="none"
+                stroke="oklch(0.7 0.18 155)" strokeWidth="3" strokeLinecap="round"
+                strokeDasharray={`${(progress / 100) * 100.5} 100.5`}
+                style={{ transition: "stroke-dasharray 1s linear" }}
+              />
+            </svg>
+            <div className="text-center">
+              <div className="text-base font-bold leading-none">{left}</div>
+              <div className="text-[8px] uppercase tracking-wide text-muted-foreground">sec</div>
+            </div>
+          </div>
+        </div>
+      )}
     </Card>
+  );
+}
+
+export function ClickAdDialog({
+  open, onOpenChange, pendingPoints, bonus, sdkReady, loading, onClaim,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  pendingPoints: number;
+  bonus: number;
+  sdkReady: boolean;
+  loading: boolean;
+  onClaim: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <div className="mx-auto mb-2 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-primary/30 to-success/30">
+            <Gift className="h-7 w-7 text-primary" />
+          </div>
+          <DialogTitle className="text-center">Bonus Ad Unlocked!</DialogTitle>
+          <DialogDescription className="text-center">
+            Click this special ad to claim your pending points <span className="font-semibold text-foreground">+{bonus}</span> bonus.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="rounded-lg border border-primary/40 bg-primary/10 p-4 text-center">
+          <div className="text-xs uppercase tracking-wide text-muted-foreground">You will receive</div>
+          <div className="mt-1 text-3xl font-bold text-primary">
+            +{pendingPoints + bonus}
+          </div>
+          <div className="mt-1 text-[11px] text-muted-foreground">
+            {pendingPoints} pending + {bonus} click bonus
+          </div>
+        </div>
+        <Button size="lg" onClick={onClaim} disabled={loading || !sdkReady} className="w-full">
+          {loading ? "Loading..." : !sdkReady ? "Ad loading..." : (<><Sparkles className="mr-2 h-4 w-4" />Click & Claim</>)}
+        </Button>
+        <p className="text-center text-[11px] text-muted-foreground">
+          Skip and your pending balance stays — claim later.
+        </p>
+      </DialogContent>
+    </Dialog>
   );
 }
 

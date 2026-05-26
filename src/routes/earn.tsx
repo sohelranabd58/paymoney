@@ -8,9 +8,9 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { BottomNav } from "@/components/BottomNav";
 import { useChatIdFromSearch } from "@/lib/useChatId";
-import { getUserState, claimAdReward, getPublicConfig } from "@/lib/app.functions";
+import { getUserState, claimAdReward, claimClickAdReward, getPublicConfig } from "@/lib/app.functions";
 import {
-  Marquee, useMonetagSdks, playAd, SectionTitle, AdCard, LoadingScreen, ErrorScreen,
+  Marquee, useMonetagSdks, playAd, SectionTitle, AdCard, ClickAdDialog, LoadingScreen, ErrorScreen,
 } from "@/components/earn-ui";
 
 export const Route = createFileRoute("/earn")({
@@ -37,8 +37,8 @@ function EarnPage() {
 }
 
 function EarnHeader({
-  appName, points, totalEarned, totalAds, badge,
-}: { appName: string; points: number; totalEarned: number; totalAds: number; badge: React.ReactNode }) {
+  appName, points, pendingPoints, totalEarned, totalAds, badge,
+}: { appName: string; points: number; pendingPoints?: number; totalEarned: number; totalAds: number; badge: React.ReactNode }) {
   return (
     <header className="relative overflow-hidden border-b border-border/40 bg-gradient-to-br from-primary/30 via-card to-background pb-6 pt-5">
       <div className="absolute inset-0 -z-0 bg-[radial-gradient(circle_at_30%_20%,oklch(0.7_0.18_155/.25),transparent_60%)]" />
@@ -55,6 +55,11 @@ function EarnHeader({
         <div className="mt-1 text-xs text-muted-foreground">
           Lifetime: {totalEarned.toLocaleString()} · {totalAds} ads watched
         </div>
+        {pendingPoints !== undefined && pendingPoints > 0 && (
+          <div className="mt-2 inline-flex items-center gap-1 rounded-full border border-warning/40 bg-warning/10 px-2.5 py-1 text-[11px] font-medium text-warning">
+            ⏳ Pending: {pendingPoints.toLocaleString()} pts (claim via bonus ad)
+          </div>
+        )}
       </div>
     </header>
   );
@@ -64,6 +69,8 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
   const qc = useQueryClient();
   const fetchState = useServerFn(getUserState);
   const claim = useServerFn(claimAdReward);
+  const claimClick = useServerFn(claimClickAdReward);
+  const [clickOpen, setClickOpen] = useState(false);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["userState", chatId],
@@ -76,8 +83,23 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
   const claimMut = useMutation({
     mutationFn: (adType: AdType) => claim({ data: { chatId, adType } }),
     onSuccess: (res) => {
-      toast.success(`+${res.earned} points!`, { icon: <Sparkles className="h-4 w-4" /> });
+      if (res.earned === 0 && res.pending_points > 0) {
+        toast.success(`+${res.pending_points} pending (${res.cycle_ads} ads)`, { icon: <Sparkles className="h-4 w-4" /> });
+      } else {
+        toast.success(`+${res.earned} points!`, { icon: <Sparkles className="h-4 w-4" /> });
+      }
       try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred("success"); } catch {}
+      qc.invalidateQueries({ queryKey: ["userState", chatId] });
+      if (res.needs_click_ad) setClickOpen(true);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const clickMut = useMutation({
+    mutationFn: () => claimClick({ data: { chatId } }),
+    onSuccess: (res) => {
+      toast.success(`+${res.moved + res.bonus} points added to balance!`, { icon: <Sparkles className="h-4 w-4" /> });
+      setClickOpen(false);
       qc.invalidateQueries({ queryKey: ["userState", chatId] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -89,12 +111,21 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
     catch (e) { toast.error(e instanceof Error ? e.message : "Ad failed"); }
   }, [loadedSdks, claimMut]);
 
+  const playClickAd = useCallback(async () => {
+    if (!data) return;
+    const sdkId = data.settings.click_ad.sdk_id;
+    if (!loadedSdks.has(sdkId)) { toast.error("Bonus ad loading..."); return; }
+    try { await playAd(sdkId, true); clickMut.mutate(); }
+    catch (e) { toast.error(e instanceof Error ? e.message : "Ad failed"); }
+  }, [data, loadedSdks, clickMut]);
+
   if (isLoading) return <LoadingScreen />;
   if (error) return <ErrorScreen message={(error as Error).message} />;
   if (!data) return null;
 
   const { user, level, settings } = data;
   const z = settings.zones;
+  const clickReady = loadedSdks.has(settings.click_ad.sdk_id);
 
   return (
     <div className="min-h-screen pb-24">
@@ -102,6 +133,7 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
       <EarnHeader
         appName={settings.app_name}
         points={user.points}
+        pendingPoints={user.pending_points}
         totalEarned={user.total_earned}
         totalAds={user.total_ads}
         badge={
@@ -117,9 +149,28 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
             ⚠️ Your account has been flagged. Contact admin.
           </Card>
         )}
+        {user.pending_points > 0 && (
+          <Card
+            className="cursor-pointer border-primary/50 bg-gradient-to-r from-primary/15 to-success/15 p-3"
+            onClick={() => setClickOpen(true)}
+          >
+            <div className="flex items-center gap-3">
+              <div className="text-2xl">🎁</div>
+              <div className="flex-1 text-xs">
+                <div className="font-semibold">Bonus ad ready!</div>
+                <div className="text-muted-foreground">
+                  Claim {user.pending_points} pending + {settings.click_ad.points} bonus
+                </div>
+              </div>
+              <div className="text-xs font-semibold text-primary">Tap →</div>
+            </div>
+          </Card>
+        )}
         <section>
           <SectionTitle>Rewarded Ads</SectionTitle>
-          <p className="mb-3 px-1 text-xs text-muted-foreground">Get rewards for actions</p>
+          <p className="mb-3 px-1 text-xs text-muted-foreground">
+            Get rewards for actions · Cycle: {user.cycle_ads}/{settings.click_ad.every}
+          </p>
           <div className="space-y-2">
             <AdCard emoji="🤩" title="Watch short ads" subtitle="Rewarded Interstitial"
               points={z.interstitial.points} today={z.interstitial.today} limit={z.interstitial.limit}
@@ -154,6 +205,16 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
           </Card>
         )}
       </main>
+
+      <ClickAdDialog
+        open={clickOpen}
+        onOpenChange={setClickOpen}
+        pendingPoints={user.pending_points}
+        bonus={settings.click_ad.points}
+        sdkReady={clickReady}
+        loading={clickMut.isPending}
+        onClaim={playClickAd}
+      />
 
       <BottomNav chatId={chatId} />
     </div>

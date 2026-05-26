@@ -74,11 +74,20 @@ async function antiFraudCheck(chatId: string, settings: Record<string, string>) 
 
 function buildZonesAndMeta(settings: Record<string, string>, todayCounts?: { interstitial: number; popup: number; inapp: number }) {
   const t = todayCounts ?? { interstitial: 0, popup: 0, inapp: 0 };
+  const clickZone = settings.click_ad_zone ?? "9518673";
   return {
     app_name: settings.app_name ?? "Earn Rewards",
     welcome_message: settings.welcome_message ?? "Watch ads and earn points!",
     marquee_text: settings.marquee_text ?? "",
     min_withdraw: Number(settings.min_withdraw ?? 1000),
+    click_ad_every: Number(settings.click_ad_every ?? 10),
+    click_ad_points: Number(settings.click_ad_points ?? 50),
+    click_ad: {
+      zone: clickZone,
+      sdk_id: settings.click_ad_sdk_id || `show_${clickZone}`,
+      points: Number(settings.click_ad_points ?? 50),
+      every: Number(settings.click_ad_every ?? 10),
+    },
     zones: {
       interstitial: {
         zone: settings.zone_interstitial ?? "9518673",
@@ -162,6 +171,8 @@ export const getUserState = createServerFn({ method: "POST" })
       user: {
         chat_id: user.chat_id,
         points: Number(user.points),
+        pending_points: Number(user.pending_points ?? 0),
+        cycle_ads: Number(user.cycle_ads ?? 0),
         total_earned: Number(user.total_earned),
         banned: user.banned,
         flagged: user.flagged ?? false,
@@ -188,6 +199,70 @@ export const getUserState = createServerFn({ method: "POST" })
         inapp: inappCount.count ?? 0,
       }),
     };
+  });
+
+// -------- Save Telegram profile from Mini App initData (client-provided) --------
+export const saveTelegramProfile = createServerFn({ method: "POST" })
+  .inputValidator((d: {
+    chatId: string;
+    first_name?: string | null;
+    last_name?: string | null;
+    username?: string | null;
+    photo_url?: string | null;
+  }) =>
+    z.object({
+      chatId: chatIdSchema,
+      first_name: z.string().trim().max(120).nullish(),
+      last_name: z.string().trim().max(120).nullish(),
+      username: z.string().trim().max(64).nullish(),
+      photo_url: z.string().trim().url().max(500).nullish(),
+    }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const { data: existing } = await supabaseAdmin
+      .from("app_users")
+      .select("tg_photo_url,tg_profile_synced_at,chat_id")
+      .eq("chat_id", data.chatId)
+      .maybeSingle();
+    if (!existing) return { skipped: true, reason: "user_missing" as const };
+
+    const updates: {
+      tg_first_name: string | null;
+      tg_last_name: string | null;
+      tg_username: string | null;
+      tg_profile_synced_at: string;
+      tg_photo_url?: string | null;
+    } = {
+      tg_first_name: data.first_name ?? null,
+      tg_last_name: data.last_name ?? null,
+      tg_username: data.username ?? null,
+      tg_profile_synced_at: new Date().toISOString(),
+    };
+
+    // download + cache photo if URL provided (Telegram photo_url is a CDN URL, can expire)
+    if (data.photo_url) {
+      try {
+        const dl = await fetch(data.photo_url);
+        if (dl.ok) {
+          const buf = new Uint8Array(await dl.arrayBuffer());
+          const ct = dl.headers.get("content-type") || "image/jpeg";
+          const ext = ct.includes("png") ? "png" : "jpg";
+          const path = `${data.chatId}.${ext}`;
+          const { error: upErr } = await supabaseAdmin.storage
+            .from("tg-avatars")
+            .upload(path, buf, { contentType: ct, upsert: true });
+          if (!upErr) {
+            const { data: pub } = supabaseAdmin.storage.from("tg-avatars").getPublicUrl(path);
+            updates.tg_photo_url = `${pub.publicUrl}?v=${Date.now()}`;
+          }
+        }
+      } catch (e) {
+        console.error("photo cache failed", e);
+      }
+    }
+
+    await supabaseAdmin.from("app_users").update(updates).eq("chat_id", data.chatId);
+    return { skipped: false, ...updates };
   });
 
 // -------- Telegram profile sync --------
@@ -346,6 +421,8 @@ export const claimAdReward = createServerFn({ method: "POST" })
     const levels = parseLevels(settings.levels_json);
     const { current } = computeLevel(levels, totalAds ?? 0);
 
+    const clickEvery = Number(settings.click_ad_every ?? 10);
+
     const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc("claim_ad_atomic", {
       p_chat_id: data.chatId,
       p_ad_type: type,
@@ -354,6 +431,7 @@ export const claimAdReward = createServerFn({ method: "POST" })
       p_base_points: cfg.points,
       p_multiplier: current.multiplier ?? 1,
       p_last_col: cfg.lastCol,
+      p_click_every: clickEvery,
     });
     if (rpcErr) throw new Error(rpcErr.message);
     const row = Array.isArray(rpcData) ? rpcData[0] : rpcData;
@@ -367,9 +445,32 @@ export const claimAdReward = createServerFn({ method: "POST" })
 
     return {
       points: Number(row.new_points),
+      pending_points: Number(row.pending_points),
       earned: Number(row.earned),
       today: Number(row.today_count),
+      cycle_ads: Number(row.cycle_ads),
+      needs_click_ad: Boolean(row.needs_click_ad),
+      click_ad_points: Number(settings.click_ad_points ?? 50),
       level: current,
+    };
+  });
+
+export const claimClickAdReward = createServerFn({ method: "POST" })
+  .inputValidator((d: { chatId: string }) => ({ chatId: chatIdSchema.parse(d.chatId) }))
+  .handler(async ({ data }) => {
+    const settings = await getSettings();
+    const bonus = Number(settings.click_ad_points ?? 50);
+    const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc("claim_click_ad_atomic", {
+      p_chat_id: data.chatId,
+      p_bonus: bonus,
+    });
+    if (rpcErr) throw new Error(rpcErr.message);
+    const row = Array.isArray(rpcData) ? rpcData[0] : rpcData;
+    if (!row) throw new Error("Claim failed");
+    return {
+      points: Number(row.new_points),
+      moved: Number(row.moved),
+      bonus: Number(row.bonus),
     };
   });
 
@@ -418,13 +519,24 @@ export const submitWithdraw = createServerFn({ method: "POST" })
     if (rpcErr) throw new Error(rpcErr.message);
     const req = { id: newId as string, status: "pending" as const };
 
-    const botToken = settings.bot_token;
+    const notifyToken = settings.notify_bot_token || settings.bot_token;
     const adminChat = settings.admin_chat_id;
-    if (botToken && adminChat) {
+    if (notifyToken && adminChat) {
+      // gather user stats for context
+      const [{ data: u }, { count: adsTotal }, { count: clicksTotal }] = await Promise.all([
+        supabaseAdmin.from("app_users").select("tg_username,tg_first_name,tg_last_name,total_earned,points").eq("chat_id", data.chatId).maybeSingle(),
+        supabaseAdmin.from("ad_watches").select("*", { count: "exact", head: true }).eq("chat_id", data.chatId),
+        supabaseAdmin.from("ad_watches").select("*", { count: "exact", head: true }).eq("chat_id", data.chatId).eq("ad_type", "click"),
+      ]);
+      const name = [u?.tg_first_name, u?.tg_last_name].filter(Boolean).join(" ") || "—";
+      const uname = u?.tg_username ? `@${u.tg_username}` : "—";
       const msg =
-        `🆕 New Withdraw Request\n\nUser: ${data.chatId}\nMethod: ${method.name}\nAccount: ${data.account}\nAmount: ${data.amount} points`;
+        `🆕 New Withdraw Request\n\n` +
+        `👤 ${name} (${uname})\nID: ${data.chatId}\n\n` +
+        `💳 ${method.name}\n📮 ${data.account}\n💰 ${data.amount} pts\n\n` +
+        `📊 Stats:\n• Ads: ${adsTotal ?? 0}\n• Click ads: ${clicksTotal ?? 0}\n• Lifetime earned: ${u?.total_earned ?? 0}\n• Balance: ${u?.points ?? 0}`;
       try {
-        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        await fetch(`https://api.telegram.org/bot${notifyToken}/sendMessage`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ chat_id: adminChat, text: msg }),
@@ -449,7 +561,7 @@ export const getUserHistory = createServerFn({ method: "POST" })
         .limit(50),
       supabaseAdmin
         .from("withdraw_requests")
-        .select("id,method_name,account,amount,status,created_at,processed_at,note")
+        .select("id,method_name,account,amount,status,created_at,processed_at,note,redeem_code")
         .eq("chat_id", data.chatId)
         .order("created_at", { ascending: false })
         .limit(50),
