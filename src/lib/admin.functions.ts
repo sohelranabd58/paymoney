@@ -201,7 +201,8 @@ export const adminUpdateSettings = createServerFn({ method: "POST" })
     const rows = Object.entries(data.settings)
       // Don't overwrite secrets when admin leaves the field empty or unchanged (masked value ends with ***)
       .filter(([key, value]) => {
-        if ((key === "admin_password" || key === "bot_token") && (value === "" || value.endsWith("***"))) {
+        const secretKeys = new Set(["admin_password", "bot_token", "notify_bot_token", "redeem_api_key"]);
+        if (secretKeys.has(key) && (value === "" || value.endsWith("***"))) {
           return false;
         }
         return true;
