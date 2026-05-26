@@ -98,7 +98,7 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
   const clickMut = useMutation({
     mutationFn: () => claimClick({ data: { chatId } }),
     onSuccess: (res) => {
-      toast.success(`+${res.total} points added to balance!`, { icon: <Sparkles className="h-4 w-4" /> });
+      toast.success(`+${res.moved + res.bonus} points added to balance!`, { icon: <Sparkles className="h-4 w-4" /> });
       setClickOpen(false);
       qc.invalidateQueries({ queryKey: ["userState", chatId] });
     },
