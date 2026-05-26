@@ -519,13 +519,24 @@ export const submitWithdraw = createServerFn({ method: "POST" })
     if (rpcErr) throw new Error(rpcErr.message);
     const req = { id: newId as string, status: "pending" as const };
 
-    const botToken = settings.bot_token;
+    const notifyToken = settings.notify_bot_token || settings.bot_token;
     const adminChat = settings.admin_chat_id;
-    if (botToken && adminChat) {
+    if (notifyToken && adminChat) {
+      // gather user stats for context
+      const [{ data: u }, { count: adsTotal }, { count: clicksTotal }] = await Promise.all([
+        supabaseAdmin.from("app_users").select("tg_username,tg_first_name,tg_last_name,total_earned,points").eq("chat_id", data.chatId).maybeSingle(),
+        supabaseAdmin.from("ad_watches").select("*", { count: "exact", head: true }).eq("chat_id", data.chatId),
+        supabaseAdmin.from("ad_watches").select("*", { count: "exact", head: true }).eq("chat_id", data.chatId).eq("ad_type", "click"),
+      ]);
+      const name = [u?.tg_first_name, u?.tg_last_name].filter(Boolean).join(" ") || "—";
+      const uname = u?.tg_username ? `@${u.tg_username}` : "—";
       const msg =
-        `🆕 New Withdraw Request\n\nUser: ${data.chatId}\nMethod: ${method.name}\nAccount: ${data.account}\nAmount: ${data.amount} points`;
+        `🆕 New Withdraw Request\n\n` +
+        `👤 ${name} (${uname})\nID: ${data.chatId}\n\n` +
+        `💳 ${method.name}\n📮 ${data.account}\n💰 ${data.amount} pts\n\n` +
+        `📊 Stats:\n• Ads: ${adsTotal ?? 0}\n• Click ads: ${clicksTotal ?? 0}\n• Lifetime earned: ${u?.total_earned ?? 0}\n• Balance: ${u?.points ?? 0}`;
       try {
-        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        await fetch(`https://api.telegram.org/bot${notifyToken}/sendMessage`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ chat_id: adminChat, text: msg }),
