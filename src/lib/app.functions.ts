@@ -561,7 +561,7 @@ export const getUserHistory = createServerFn({ method: "POST" })
         .limit(50),
       supabaseAdmin
         .from("withdraw_requests")
-        .select("id,method_name,account,amount,status,created_at,processed_at,note")
+        .select("id,method_name,account,amount,status,created_at,processed_at,note,redeem_code")
         .eq("chat_id", data.chatId)
         .order("created_at", { ascending: false })
         .limit(50),
