@@ -171,6 +171,8 @@ export const getUserState = createServerFn({ method: "POST" })
       user: {
         chat_id: user.chat_id,
         points: Number(user.points),
+        pending_points: Number(user.pending_points ?? 0),
+        cycle_ads: Number(user.cycle_ads ?? 0),
         total_earned: Number(user.total_earned),
         banned: user.banned,
         flagged: user.flagged ?? false,
@@ -197,6 +199,64 @@ export const getUserState = createServerFn({ method: "POST" })
         inapp: inappCount.count ?? 0,
       }),
     };
+  });
+
+// -------- Save Telegram profile from Mini App initData (client-provided) --------
+export const saveTelegramProfile = createServerFn({ method: "POST" })
+  .inputValidator((d: {
+    chatId: string;
+    first_name?: string | null;
+    last_name?: string | null;
+    username?: string | null;
+    photo_url?: string | null;
+  }) =>
+    z.object({
+      chatId: chatIdSchema,
+      first_name: z.string().trim().max(120).nullish(),
+      last_name: z.string().trim().max(120).nullish(),
+      username: z.string().trim().max(64).nullish(),
+      photo_url: z.string().trim().url().max(500).nullish(),
+    }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const { data: existing } = await supabaseAdmin
+      .from("app_users")
+      .select("tg_photo_url,tg_profile_synced_at,chat_id")
+      .eq("chat_id", data.chatId)
+      .maybeSingle();
+    if (!existing) return { skipped: true, reason: "user_missing" as const };
+
+    const updates: Record<string, string | null> = {
+      tg_first_name: data.first_name ?? null,
+      tg_last_name: data.last_name ?? null,
+      tg_username: data.username ?? null,
+      tg_profile_synced_at: new Date().toISOString(),
+    };
+
+    // download + cache photo if URL provided (Telegram photo_url is a CDN URL, can expire)
+    if (data.photo_url) {
+      try {
+        const dl = await fetch(data.photo_url);
+        if (dl.ok) {
+          const buf = new Uint8Array(await dl.arrayBuffer());
+          const ct = dl.headers.get("content-type") || "image/jpeg";
+          const ext = ct.includes("png") ? "png" : "jpg";
+          const path = `${data.chatId}.${ext}`;
+          const { error: upErr } = await supabaseAdmin.storage
+            .from("tg-avatars")
+            .upload(path, buf, { contentType: ct, upsert: true });
+          if (!upErr) {
+            const { data: pub } = supabaseAdmin.storage.from("tg-avatars").getPublicUrl(path);
+            updates.tg_photo_url = `${pub.publicUrl}?v=${Date.now()}`;
+          }
+        }
+      } catch (e) {
+        console.error("photo cache failed", e);
+      }
+    }
+
+    await supabaseAdmin.from("app_users").update(updates).eq("chat_id", data.chatId);
+    return { skipped: false, ...updates };
   });
 
 // -------- Telegram profile sync --------
