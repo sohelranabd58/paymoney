@@ -83,8 +83,8 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
   const claimMut = useMutation({
     mutationFn: (adType: AdType) => claim({ data: { chatId, adType } }),
     onSuccess: (res) => {
-      if (res.pending) {
-        toast.success(`+${res.earned} pending (${res.cycle_ads}/${res.click_every})`, { icon: <Sparkles className="h-4 w-4" /> });
+      if (res.earned === 0 && res.pending_points > 0) {
+        toast.success(`+${res.pending_points} pending (${res.cycle_ads} ads)`, { icon: <Sparkles className="h-4 w-4" /> });
       } else {
         toast.success(`+${res.earned} points!`, { icon: <Sparkles className="h-4 w-4" /> });
       }
