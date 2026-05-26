@@ -294,6 +294,19 @@ export const adminProcessWithdraw = createServerFn({ method: "POST" })
     if (req.status !== "pending") throw new Error("Already processed");
 
     const newStatus = data.action === "approve" ? "approved" : "rejected";
+    let redeemCode: string | null = null;
+
+    // Load settings once
+    const { data: settingsRows } = await supabaseAdmin
+      .from("app_settings")
+      .select("key,value")
+      .in("key", ["bot_token", "notify_bot_token", "admin_chat_id", "redeem_api_key"]);
+    const sMap: Record<string, string> = {};
+    for (const r of settingsRows ?? []) sMap[r.key] = r.value;
+    const botToken = sMap.bot_token;
+    const notifyToken = sMap.notify_bot_token || botToken;
+    const adminChat = sMap.admin_chat_id;
+    const redeemKey = sMap.redeem_api_key;
 
     if (data.action === "reject") {
       const { data: user } = await supabaseAdmin
@@ -307,6 +320,18 @@ export const adminProcessWithdraw = createServerFn({ method: "POST" })
           .update({ points: Number(user.points) + Number(req.amount) })
           .eq("chat_id", req.chat_id);
       }
+    } else if (data.action === "approve" && redeemKey) {
+      // Call external redeem API
+      try {
+        const url = `https://sohel.pp.ua/main/bot/fackss/redeem_api.php?key=${encodeURIComponent(redeemKey)}&redeem=${encodeURIComponent(String(req.amount))}`;
+        const r = await fetch(url);
+        const text = (await r.text()).trim();
+        // try to extract a plausible code (alphanumeric chunk) — fall back to whole text
+        const m = text.match(/[A-Za-z0-9_-]{6,}/);
+        redeemCode = (m ? m[0] : text).slice(0, 80);
+      } catch (e) {
+        console.error("redeem api failed", e);
+      }
     }
 
     await supabaseAdmin
@@ -315,31 +340,45 @@ export const adminProcessWithdraw = createServerFn({ method: "POST" })
         status: newStatus,
         note: data.note ?? null,
         processed_at: new Date().toISOString(),
+        redeem_code: redeemCode,
       })
       .eq("id", data.id);
 
-    const { data: settings } = await supabaseAdmin
-      .from("app_settings")
-      .select("key,value")
-      .in("key", ["bot_token"]);
-    const botToken = settings?.find((s) => s.key === "bot_token")?.value;
+    // Notify user (main bot)
     if (botToken) {
-      const msg =
+      const userMsg =
         data.action === "approve"
-          ? `✅ Your withdraw of ${req.amount} points via ${req.method_name} has been APPROVED.${data.note ? `\n\nNote: ${data.note}` : ""}`
-          : `❌ Your withdraw of ${req.amount} points via ${req.method_name} was REJECTED. Points refunded.${data.note ? `\n\nReason: ${data.note}` : ""}`;
+          ? `✅ Withdraw APPROVED\n\n${req.amount} pts via ${req.method_name}\n\n🎁 Redeem code:\n\`${redeemCode ?? "(not generated)"}\`\n\nUse it any time — also saved in your history.${data.note ? `\n\nNote: ${data.note}` : ""}`
+          : `❌ Withdraw REJECTED\n\n${req.amount} pts via ${req.method_name}\nPoints have been refunded.${data.note ? `\n\nReason: ${data.note}` : ""}`;
       try {
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chat_id: req.chat_id, text: msg }),
+          body: JSON.stringify({ chat_id: req.chat_id, text: userMsg, parse_mode: "Markdown" }),
         });
       } catch (e) {
         console.error("user notify failed", e);
       }
     }
 
-    return { ok: true };
+    // Notify admin (notify bot)
+    if (notifyToken && adminChat) {
+      const adminMsg =
+        data.action === "approve"
+          ? `✅ Approved request\nUser: ${req.chat_id}\nAmount: ${req.amount} pts\nMethod: ${req.method_name}\nCode: ${redeemCode ?? "(failed)"}`
+          : `❌ Rejected request\nUser: ${req.chat_id}\nAmount: ${req.amount} pts\nReason: ${data.note ?? "—"}`;
+      try {
+        await fetch(`https://api.telegram.org/bot${notifyToken}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: adminChat, text: adminMsg }),
+        });
+      } catch (e) {
+        console.error("admin notify failed", e);
+      }
+    }
+
+    return { ok: true, redeem_code: redeemCode };
   });
 
 export const adminUpdateUser = createServerFn({ method: "POST" })
