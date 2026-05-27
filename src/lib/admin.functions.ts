@@ -553,12 +553,6 @@ export const adminBulkProcessWithdraw = createServerFn({ method: "POST" })
     // serial to avoid hammering redeem api
     for (const id of data.ids) {
       try {
-        const res = await fetch(
-          new URL("/_serverFn/adminProcessWithdraw", "http://localhost").toString(),
-          {},
-        ).catch(() => null);
-        void res;
-        // Inline call instead of HTTP to avoid auth attaching
         const { data: req } = await supabaseAdmin
           .from("withdraw_requests")
           .select("status")
