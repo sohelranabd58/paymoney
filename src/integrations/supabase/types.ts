@@ -326,45 +326,27 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      claim_ad_atomic:
-        | {
-            Args: {
-              p_ad_type: string
-              p_base_points: number
-              p_chat_id: string
-              p_cooldown: number
-              p_daily_limit: number
-              p_last_col: string
-              p_multiplier: number
-            }
-            Returns: {
-              earned: number
-              new_level: number
-              new_points: number
-              today_count: number
-            }[]
-          }
-        | {
-            Args: {
-              p_ad_type: string
-              p_base_points: number
-              p_chat_id: string
-              p_click_every?: number
-              p_cooldown: number
-              p_daily_limit: number
-              p_last_col: string
-              p_multiplier: number
-            }
-            Returns: {
-              cycle_ads: number
-              earned: number
-              needs_click_ad: boolean
-              new_level: number
-              new_points: number
-              pending_points: number
-              today_count: number
-            }[]
-          }
+      claim_ad_atomic: {
+        Args: {
+          p_ad_type: string
+          p_base_points: number
+          p_chat_id: string
+          p_click_every?: number
+          p_cooldown: number
+          p_daily_limit: number
+          p_last_col: string
+          p_multiplier: number
+        }
+        Returns: {
+          cycle_ads: number
+          earned: number
+          needs_click_ad: boolean
+          new_level: number
+          new_points: number
+          pending_points: number
+          today_count: number
+        }[]
+      }
       claim_click_ad_atomic: {
         Args: { p_bonus: number; p_chat_id: string }
         Returns: {

@@ -1,0 +1,1 @@
+DROP FUNCTION IF EXISTS public.claim_ad_atomic(text, text, integer, integer, integer, numeric, text);
