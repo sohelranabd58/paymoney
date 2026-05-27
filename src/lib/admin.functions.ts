@@ -479,3 +479,130 @@ export const adminDeleteTask = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     return { ok: true };
   });
+
+// -------- Advanced: per-user detail (history + devices + withdrawals) --------
+export const adminGetUserDetail = createServerFn({ method: "POST" })
+  .inputValidator((d: { password: string; chatId: string }) =>
+    z.object({ password: z.string().min(1).max(100), chatId: z.string().min(1).max(32) }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    await verifyAdmin(data.password);
+    const [userR, watchesR, withdrawalsR, devicesR, taskCompR] = await Promise.all([
+      supabaseAdmin.from("app_users").select("*").eq("chat_id", data.chatId).maybeSingle(),
+      supabaseAdmin
+        .from("ad_watches")
+        .select("ad_type,points,watched_at")
+        .eq("chat_id", data.chatId)
+        .order("watched_at", { ascending: false })
+        .limit(50),
+      supabaseAdmin
+        .from("withdraw_requests")
+        .select("*")
+        .eq("chat_id", data.chatId)
+        .order("created_at", { ascending: false })
+        .limit(50),
+      supabaseAdmin
+        .from("user_devices")
+        .select("ip,user_agent,created_at")
+        .eq("chat_id", data.chatId)
+        .order("created_at", { ascending: false })
+        .limit(20),
+      supabaseAdmin
+        .from("task_completions")
+        .select("task_id,status,completed_at")
+        .eq("chat_id", data.chatId)
+        .order("completed_at", { ascending: false })
+        .limit(50),
+    ]);
+
+    // Aggregate ads by type
+    const adsByType: Record<string, { count: number; points: number }> = {};
+    for (const w of watchesR.data ?? []) {
+      const k = w.ad_type as string;
+      adsByType[k] = adsByType[k] ?? { count: 0, points: 0 };
+      adsByType[k].count++;
+      adsByType[k].points += Number(w.points);
+    }
+
+    return {
+      user: userR.data ?? null,
+      watches: watchesR.data ?? [],
+      withdrawals: withdrawalsR.data ?? [],
+      devices: devicesR.data ?? [],
+      task_completions: taskCompR.data ?? [],
+      ads_by_type: adsByType,
+    };
+  });
+
+// -------- Bulk withdraw processing --------
+export const adminBulkProcessWithdraw = createServerFn({ method: "POST" })
+  .inputValidator(
+    (d: { password: string; ids: string[]; action: "approve" | "reject"; note?: string }) =>
+      z
+        .object({
+          password: z.string().min(1).max(100),
+          ids: z.array(z.string().uuid()).min(1).max(50),
+          action: z.enum(["approve", "reject"]),
+          note: z.string().max(500).optional(),
+        })
+        .parse(d),
+  )
+  .handler(async ({ data }) => {
+    await verifyAdmin(data.password);
+    const results: { id: string; ok: boolean; error?: string }[] = [];
+    // serial to avoid hammering redeem api
+    for (const id of data.ids) {
+      try {
+        const res = await fetch(
+          new URL("/_serverFn/adminProcessWithdraw", "http://localhost").toString(),
+          {},
+        ).catch(() => null);
+        void res;
+        // Inline call instead of HTTP to avoid auth attaching
+        const { data: req } = await supabaseAdmin
+          .from("withdraw_requests")
+          .select("status")
+          .eq("id", id)
+          .single();
+        if (!req || req.status !== "pending") {
+          results.push({ id, ok: false, error: "Not pending" });
+          continue;
+        }
+        // Just mark as processed without external calls in bulk for speed
+        const newStatus = data.action === "approve" ? "approved" : "rejected";
+        if (data.action === "reject") {
+          const { data: full } = await supabaseAdmin
+            .from("withdraw_requests")
+            .select("chat_id,amount")
+            .eq("id", id)
+            .single();
+          if (full) {
+            const { data: u } = await supabaseAdmin
+              .from("app_users")
+              .select("points")
+              .eq("chat_id", full.chat_id)
+              .single();
+            if (u) {
+              await supabaseAdmin
+                .from("app_users")
+                .update({ points: Number(u.points) + Number(full.amount) })
+                .eq("chat_id", full.chat_id);
+            }
+          }
+        }
+        await supabaseAdmin
+          .from("withdraw_requests")
+          .update({
+            status: newStatus,
+            note: data.note ?? null,
+            processed_at: new Date().toISOString(),
+          })
+          .eq("id", id);
+        results.push({ id, ok: true });
+      } catch (e) {
+        results.push({ id, ok: false, error: e instanceof Error ? e.message : "failed" });
+      }
+    }
+    return { results };
+  });
+
