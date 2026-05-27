@@ -444,12 +444,12 @@ export const claimAdReward = createServerFn({ method: "POST" })
       .eq("chat_id", data.chatId);
 
     return {
-      points: Number(row.new_points),
-      pending_points: Number(row.pending_points),
-      earned: Number(row.earned),
-      today: Number(row.today_count),
-      cycle_ads: Number(row.cycle_ads),
-      needs_click_ad: Boolean(row.needs_click_ad),
+      points: Number(row.out_new_points),
+      pending_points: Number(row.out_pending_points),
+      earned: Number(row.out_earned),
+      today: Number(row.out_today_count),
+      cycle_ads: Number(row.out_cycle_ads),
+      needs_click_ad: Boolean(row.out_needs_click_ad),
       click_ad_points: Number(settings.click_ad_points ?? 50),
       level: current,
     };
