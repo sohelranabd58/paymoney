@@ -338,13 +338,13 @@ export type Database = {
           p_multiplier: number
         }
         Returns: {
-          cycle_ads: number
-          earned: number
-          needs_click_ad: boolean
-          new_level: number
-          new_points: number
-          pending_points: number
-          today_count: number
+          out_cycle_ads: number
+          out_earned: number
+          out_needs_click_ad: boolean
+          out_new_level: number
+          out_new_points: number
+          out_pending_points: number
+          out_today_count: number
         }[]
       }
       claim_click_ad_atomic: {
