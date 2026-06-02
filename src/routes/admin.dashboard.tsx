@@ -116,15 +116,29 @@ const ADMIN_THEME = `
 
 function AdminDashboard() {
   const navigate = useNavigate();
-  const [password, setPassword] = useState<string | null>(null);
+  const [password, setPassword] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return sessionStorage.getItem("admin_pw");
+  });
+  const [checked, setChecked] = useState(false);
 
   useEffect(() => {
     const pw = sessionStorage.getItem("admin_pw");
-    if (!pw) navigate({ to: "/admin" });
-    else setPassword(pw);
-  }, [navigate]);
+    if (pw) setPassword(pw);
+    setChecked(true);
+  }, []);
 
-  if (!password) return null;
+  useEffect(() => {
+    if (checked && !password) navigate({ to: "/admin" });
+  }, [checked, password, navigate]);
+
+  if (!password) {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
+        Checking session…
+      </div>
+    );
+  }
   return (
     <>
       <style>{ADMIN_THEME}</style>
