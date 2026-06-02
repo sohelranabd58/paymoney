@@ -1719,6 +1719,19 @@ function SettingsSection({
           onChange={(v) => set("marquee_text", v)}
           placeholder="🔥 New rewards! Invite friends…"
         />
+        <div className="space-y-1.5">
+          <Label className="text-xs">Notice slides (one per line — slides on Home)</Label>
+          <Textarea
+            value={noticeLinesFromJson(form.notice_slides)}
+            onChange={(e) => set("notice_slides", noticeLinesToJson(e.target.value))}
+            placeholder={"🎉 Welcome to our app!\n💰 Withdraw min: 1000 pts\n📢 Invite friends & earn"}
+            rows={4}
+            className="font-mono text-xs"
+          />
+          <p className="text-[10px] text-muted-foreground">
+            Each line shows as one rotating notice on Home. Leave blank to hide.
+          </p>
+        </div>
       </Card>
 
       <Card className="space-y-3 p-4">
