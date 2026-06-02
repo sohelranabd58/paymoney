@@ -125,6 +125,19 @@ const ADMIN_THEME = `
 .admin-shell .num { font-variant-numeric: tabular-nums; }
 `;
 
+function noticeLinesFromJson(v: string | undefined): string {
+  if (!v) return "";
+  try {
+    const arr = JSON.parse(v);
+    if (Array.isArray(arr)) return arr.filter((s) => typeof s === "string").join("\n");
+  } catch { /* ignore */ }
+  return "";
+}
+function noticeLinesToJson(text: string): string {
+  const lines = text.split("\n").map((s) => s.trim()).filter(Boolean);
+  return JSON.stringify(lines);
+}
+
 function AdminDashboard() {
   const navigate = useNavigate();
   const [password, setPassword] = useState<string | null>(() => {
