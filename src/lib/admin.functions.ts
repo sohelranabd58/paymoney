@@ -600,3 +600,20 @@ export const adminBulkProcessWithdraw = createServerFn({ method: "POST" })
     return { results };
   });
 
+
+// -------- Reset all user points (current balance + pending), keeps total_earned history --------
+export const adminResetAllPoints = createServerFn({ method: "POST" })
+  .inputValidator((d: { password: string; confirm: string }) =>
+    z
+      .object({
+        password: z.string().min(1).max(100),
+        confirm: z.literal("RESET"),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    await verifyAdmin(data.password);
+    const { data: rpcData, error } = await supabaseAdmin.rpc("admin_reset_all_points");
+    if (error) throw new Error(error.message);
+    return { ok: true, affected: Number(rpcData ?? 0) };
+  });
