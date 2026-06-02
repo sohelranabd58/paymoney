@@ -12,6 +12,7 @@ import { BottomNav } from "@/components/BottomNav";
 import { useChatIdFromSearch } from "@/lib/useChatId";
 import { getUserState, getPublicConfig, syncTelegramProfile } from "@/lib/app.functions";
 import { Marquee, LoadingScreen, ErrorScreen } from "@/components/earn-ui";
+import { NoticeSlider } from "@/components/NoticeSlider";
 
 export const Route = createFileRoute("/")({
   component: HomePage,
