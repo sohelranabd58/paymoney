@@ -105,6 +105,7 @@ function HomeLoggedIn({ chatId }: { chatId: string }) {
 
   return (
     <div className="min-h-screen pb-24">
+      <NoticeSlider items={settings.notice_slides} />
       <Marquee text={settings.marquee_text} />
 
       {/* Profile header */}
