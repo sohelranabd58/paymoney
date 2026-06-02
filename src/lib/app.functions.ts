@@ -75,10 +75,16 @@ async function antiFraudCheck(chatId: string, settings: Record<string, string>) 
 function buildZonesAndMeta(settings: Record<string, string>, todayCounts?: { interstitial: number; popup: number; inapp: number }) {
   const t = todayCounts ?? { interstitial: 0, popup: 0, inapp: 0 };
   const clickZone = settings.click_ad_zone ?? "9518673";
+  let noticeSlides: string[] = [];
+  try {
+    const parsed = JSON.parse(settings.notice_slides ?? "[]");
+    if (Array.isArray(parsed)) noticeSlides = parsed.filter((s) => typeof s === "string" && s.trim().length > 0);
+  } catch { /* ignore */ }
   return {
     app_name: settings.app_name ?? "Earn Rewards",
     welcome_message: settings.welcome_message ?? "Watch ads and earn points!",
     marquee_text: settings.marquee_text ?? "",
+    notice_slides: noticeSlides,
     min_withdraw: Number(settings.min_withdraw ?? 1000),
     click_ad_every: Number(settings.click_ad_every ?? 10),
     click_ad_points: Number(settings.click_ad_points ?? 50),
@@ -87,6 +93,7 @@ function buildZonesAndMeta(settings: Record<string, string>, todayCounts?: { int
       sdk_id: settings.click_ad_sdk_id || `show_${clickZone}`,
       points: Number(settings.click_ad_points ?? 50),
       every: Number(settings.click_ad_every ?? 10),
+      required: (settings.click_ad_required ?? "false") === "true",
     },
     zones: {
       interstitial: {
