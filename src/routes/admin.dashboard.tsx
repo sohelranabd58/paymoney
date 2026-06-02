@@ -424,6 +424,19 @@ function UsersSection({
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "flagged" | "banned">("all");
   const [openChatId, setOpenChatId] = useState<string | null>(null);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetConfirm, setResetConfirm] = useState("");
+  const resetFn = useServerFn(adminResetAllPoints);
+  const resetMut = useMutation({
+    mutationFn: () => resetFn({ data: { password, confirm: "RESET" } }),
+    onSuccess: (r) => {
+      toast.success(`Reset ${r.affected} user(s) to 0 points`);
+      setResetOpen(false);
+      setResetConfirm("");
+      onChange();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   const filtered = useMemo(() => {
     let r = users;
