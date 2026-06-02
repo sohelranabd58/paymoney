@@ -1235,7 +1235,20 @@ function AdsSection({
             onChange={(v) => set("click_ad_every", v)}
           />
         </div>
+        <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 p-3">
+          <div className="pr-3">
+            <div className="text-sm font-medium">Click-ad required</div>
+            <div className="text-[11px] text-muted-foreground">
+              When ON, ad rewards go to pending and users must watch a bonus click ad to unlock them. When OFF, rewards go straight to balance.
+            </div>
+          </div>
+          <Switch
+            checked={(form.click_ad_required ?? "false") === "true"}
+            onCheckedChange={(v) => set("click_ad_required", v ? "true" : "false")}
+          />
+        </div>
       </Card>
+
 
       <Button onClick={() => mut.mutate()} disabled={mut.isPending} size="lg" className="w-full">
         {mut.isPending ? "Saving…" : "Save zone & ad settings"}
