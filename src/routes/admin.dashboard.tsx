@@ -481,7 +481,47 @@ function UsersSection({
             </Badge>
           </Button>
         ))}
+        <Button
+          size="sm"
+          variant="destructive"
+          className="ml-auto gap-1"
+          onClick={() => setResetOpen(true)}
+        >
+          <Trash2 className="h-3.5 w-3.5" /> Reset all points
+        </Button>
       </Card>
+
+      <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
+        <AlertDialogContent className="admin-shell">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset all user points?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This sets every user's current balance and pending points to <b>0</b>. Lifetime
+              earnings (history) are preserved. This cannot be undone. Type <b>RESET</b> to confirm.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Input
+            value={resetConfirm}
+            onChange={(e) => setResetConfirm(e.target.value)}
+            placeholder="Type RESET"
+            autoFocus
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setResetConfirm("")}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={resetConfirm !== "RESET" || resetMut.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                resetMut.mutate();
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {resetMut.isPending ? "Resetting…" : "Reset everyone"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
 
       <Card className="overflow-x-auto p-0">
         <table className="w-full text-sm">
