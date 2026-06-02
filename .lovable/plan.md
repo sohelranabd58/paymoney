@@ -1,76 +1,60 @@
-## 1. Fix the "pending_points is ambiguous" bug
+# Plan
 
-The current `claim_ad_atomic` RPC declares an OUT parameter named `pending_points` and ALSO selects from a column named `pending_points` on `app_users`. Postgres can't tell them apart in the final `SELECT ... INTO`, so every ad claim throws the error shown in your screenshot.
+## 1. Fix admin login → dashboard redirect
 
-**Fix:** migration that recreates `claim_ad_atomic` with renamed OUT params (`new_points`, `new_pending`, `earned`, `today_count`, `cycle_ads`, `needs_click_ad`, `new_level`) and fully-qualified column reads (`u.pending_points`, etc.). Update the server function in `src/lib/app.functions.ts` to read the renamed fields and map them back to the same client shape (`pending_points` stays in the JSON response so `earn.tsx` keeps working unchanged).
+**Problem:** After entering password on `/admin`, the dashboard at `/admin/dashboard` immediately bounces back to `/admin` because its `useEffect` reads `sessionStorage` on the first client tick and, in some browsers (and after SSR hydration), runs before TanStack Router has stabilized the new route, so the guard navigates away.
 
-Also add a tiny smoke-test script `scripts/smoke-claim-ad.ts` that:
-- creates/upserts a test `app_users` row (`chat_id = 'smoke_test_user'`)
-- calls `claim_ad_atomic` with sample args (interstitial, 30s cooldown, 100 limit, 10 base pts, 1.0 multiplier, last_ad_at, every=10)
-- prints returned fields and asserts no error
-- runs once for "new user" and once for "existing user" path
-- cleans up
+**Fix in `src/routes/admin.dashboard.tsx`:**
+- Initialize `password` synchronously from `sessionStorage` using a lazy `useState` initializer (guarded with `typeof window !== "undefined"`).
+- Only call `navigate({ to: "/admin" })` inside `useEffect` when `password === null` AFTER mount — and only once.
+- Remove the early `return null` flicker by rendering a small "Checking session…" placeholder while redirecting.
 
-You can run it with `bun scripts/smoke-claim-ad.ts` after the fix lands.
+This guarantees the dashboard sees the freshly-written `admin_pw` and stays put.
 
-## 2. Full admin panel remake
+## 2. Click ad: make optional + fully admin-configurable
 
-Based on your choices: full UI redesign + reorganize sections + advanced user mgmt + advanced withdrawal queue, with a **professional slate/blue data-dense look** (Vercel/Linear style).
+**Currently** `claim_ad_atomic` forces a click-ad every N ads (cycle), and `earn.tsx` opens the click-ad dialog when `needs_click_ad` is true. The user wants click-ads to NOT be mandatory; all ad-view and click-ad point/zone settings must live in the admin panel.
 
-### Layout
+**Changes:**
+- **DB migration**: Update `claim_ad_atomic` so `out_needs_click_ad` is always `false` when a new setting `click_ad_required` is `'false'` (default `'false'`). The cycle counter still advances, but it never blocks claiming.
+- **`src/lib/app.functions.ts`**: Read `click_ad_required` from `app_settings` and expose it in `getApp().settings.click_ad.required`. When `false`, `claimAd` returns `needs_click_ad: false` regardless.
+- **`src/routes/earn.tsx`**: Only open the click-ad dialog when `settings.click_ad.required && res.needs_click_ad`. Keep the manual "Claim pending + bonus" button so users can still trigger the bonus click-ad voluntarily.
+- **Admin panel — Ads & Zones section**: Add the missing controls so admin can edit, for each ad type:
+  - SDK zone ID, points per view, daily limit, cooldown seconds
+  - Click-ad: zone ID, points, cycle (every N), and a new "Required" toggle (`click_ad_required`)
+  - These already partially exist; we'll add the toggle + ensure all values save through `adminUpdateSettings`.
 
-- `SidebarProvider` + collapsible icon sidebar on the left, top header with breadcrumb + search + logout.
-- Slate-900 background, slate-800 surfaces, blue-500 accent, mono numbers, compact data tables.
-- Each section becomes its own route under `/admin/dashboard/*` so URLs are shareable and code stays small.
+## 3. Reset-all-points button
 
-```text
-src/routes/
-  admin.dashboard.tsx          → layout shell (sidebar + Outlet), guards password
-  admin.dashboard.index.tsx    → Overview
-  admin.dashboard.users.tsx    → Users
-  admin.dashboard.withdrawals.tsx
-  admin.dashboard.ads.tsx      → Ads & Zones
-  admin.dashboard.tasks.tsx
-  admin.dashboard.methods.tsx
-  admin.dashboard.settings.tsx
-```
+**Admin panel → Users section** (and also in Settings as a dangerous action):
+- Add a red "Reset all user points" button that opens an `AlertDialog` confirmation requiring typing `RESET` to confirm.
+- New server fn `adminResetAllPoints({ password })` in `src/lib/admin.functions.ts` that runs `UPDATE app_users SET points = 0, pending_points = 0, cycle_ads = 0`. (Does NOT touch `total_earned` so history is preserved.)
+- Optional second button "Reset points + total_earned" with separate confirm for full wipe.
 
-### Sections
+## 4. Home notice slider (admin-controlled)
 
-1. **Overview** — KPI cards (total users, today's ads, pending withdrawals, total points paid, today's signups), 7-day line chart (ads + signups + withdrawals), recent activity feed.
+The existing `marquee_text` is a single scrolling line. The user wants a **notice slider** — multiple announcements that rotate/slide on the Home page, edited from admin.
 
-2. **Users** — searchable/sortable table (chat_id, tg_username, name, points, pending, lifetime, total ads, last seen, status). Row click opens a side sheet with: full Telegram profile, ad history breakdown by type, withdrawal history, devices/IPs, and actions: edit points (+/-), ban/unban, flag/unflag, force-claim pending, delete user.
+**Changes:**
+- **DB**: Add `notice_slides` setting key storing a JSON array of strings (e.g. `["New ad zone live!", "Withdraw min lowered to 500"]`).
+- **`src/lib/app.functions.ts`**: Parse and expose `settings.notice_slides: string[]`.
+- **`src/components/NoticeSlider.tsx`** (new): A horizontally sliding/auto-rotating banner above the marquee on Home; rotates every 4s with fade transition; hidden when empty.
+- **`src/routes/index.tsx`**: Render `<NoticeSlider items={settings.notice_slides} />` above the existing `<Marquee />`.
+- **Admin panel → Settings**: New "Notice slides" textarea (one notice per line) that serializes to JSON on save.
 
-3. **Withdrawals** — tabs Pending / Approved / Rejected / All, search by chat_id/account, each row expandable inline showing user stats (total ads, click ads, lifetime earned, prior withdrawals). Approve generates redeem code via existing sohel.pp.ua API + notifies user & admin. Reject takes optional reason. Bulk select for approve/reject.
+## Technical notes
 
-4. **Ads & Zones** — per-ad-type cards (interstitial / popup / inapp / click) with editable SDK zone id, points, daily limit, cooldown. Click-ad cycle setting (`click_ad_every`).
+- All admin actions stay password-gated via the existing `verifyAdmin` helper.
+- The click-ad SQL change is the only DB-function edit; data shape unchanged.
+- No changes to user-facing theme/tokens.
+- Marquee stays as-is for backward compatibility.
 
-5. **Tasks** — list + create/edit/delete tasks (visit URL, join Telegram channel), toggle active, reorder.
+## Files touched
 
-6. **Methods** — withdraw methods CRUD (bKash, Nagad, Binance, etc.) with min amount, instructions, icon, enabled toggle.
-
-7. **Settings** — app name, marquee text, min withdraw, bot token (masked), notify bot token (masked), admin chat id, redeem API key (masked), admin password change.
-
-### Backend additions (server fns in `src/lib/admin.functions.ts`)
-
-- `adminGetUsers({ search, limit, offset, sort })` — paginated list
-- `adminGetUserDetail({ chat_id })` — full profile + history
-- `adminAdjustPoints({ chat_id, delta, reason })`
-- `adminToggleBan` / `adminToggleFlag`
-- `adminBulkProcessWithdraws({ ids[], action, note? })`
-- `adminGetWithdraws({ status, search, limit, offset })` — extend existing query
-
-All gated by the existing admin password check; password stays `76737`.
-
-### Tech notes
-
-- Reuse all existing tables — no schema changes beyond the function fix.
-- Use shadcn `Sidebar`, `Table`, `Sheet`, `Tabs`, `Dialog`, `Command` (for search), `Badge`.
-- Slate/blue theme applied via local CSS variables on the admin layout only — does NOT change the user-facing dark green app theme.
-- Mobile: sidebar collapses to icon strip; tables get horizontal scroll.
-
-## Out of scope
-
-- No changes to user-facing Earn/Home/Tasks/Withdraw/History UI.
-- No new database tables.
-- Marquee, redeem flow, bot notifications already work — left untouched, just exposed in new admin UI.
+- `src/routes/admin.dashboard.tsx` (login guard fix, Reset button, Required toggle, Notice slides textarea)
+- `src/lib/admin.functions.ts` (`adminResetAllPoints`)
+- `src/lib/app.functions.ts` (expose `click_ad.required`, `notice_slides`)
+- `src/routes/earn.tsx` (respect `required` flag)
+- `src/routes/index.tsx` (mount NoticeSlider)
+- `src/components/NoticeSlider.tsx` (new)
+- New migration: update `claim_ad_atomic` + seed `click_ad_required='false'` and `notice_slides='[]'`

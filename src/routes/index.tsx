@@ -12,6 +12,7 @@ import { BottomNav } from "@/components/BottomNav";
 import { useChatIdFromSearch } from "@/lib/useChatId";
 import { getUserState, getPublicConfig, syncTelegramProfile } from "@/lib/app.functions";
 import { Marquee, LoadingScreen, ErrorScreen } from "@/components/earn-ui";
+import { NoticeSlider } from "@/components/NoticeSlider";
 
 export const Route = createFileRoute("/")({
   component: HomePage,
@@ -104,6 +105,7 @@ function HomeLoggedIn({ chatId }: { chatId: string }) {
 
   return (
     <div className="min-h-screen pb-24">
+      <NoticeSlider items={settings.notice_slides} />
       <Marquee text={settings.marquee_text} />
 
       {/* Profile header */}
@@ -222,6 +224,7 @@ function HomeGuest() {
 
   return (
     <div className="min-h-screen pb-24">
+      <NoticeSlider items={s.notice_slides} />
       <Marquee text={s.marquee_text} />
       <header className="relative overflow-hidden border-b border-border/40 bg-gradient-to-br from-primary/30 via-card to-background pb-6 pt-5">
         <div className="absolute inset-0 -z-0 bg-[radial-gradient(circle_at_30%_20%,oklch(0.7_0.18_155/.25),transparent_60%)]" />

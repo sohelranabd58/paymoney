@@ -54,7 +54,18 @@ import {
   adminDeleteTask,
   adminGetUserDetail,
   adminBulkProcessWithdraw,
+  adminResetAllPoints,
 } from "@/lib/admin.functions";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export const Route = createFileRoute("/admin/dashboard")({
   component: AdminDashboard,
@@ -114,17 +125,44 @@ const ADMIN_THEME = `
 .admin-shell .num { font-variant-numeric: tabular-nums; }
 `;
 
+function noticeLinesFromJson(v: string | undefined): string {
+  if (!v) return "";
+  try {
+    const arr = JSON.parse(v);
+    if (Array.isArray(arr)) return arr.filter((s) => typeof s === "string").join("\n");
+  } catch { /* ignore */ }
+  return "";
+}
+function noticeLinesToJson(text: string): string {
+  const lines = text.split("\n").map((s) => s.trim()).filter(Boolean);
+  return JSON.stringify(lines);
+}
+
 function AdminDashboard() {
   const navigate = useNavigate();
-  const [password, setPassword] = useState<string | null>(null);
+  const [password, setPassword] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return sessionStorage.getItem("admin_pw");
+  });
+  const [checked, setChecked] = useState(false);
 
   useEffect(() => {
     const pw = sessionStorage.getItem("admin_pw");
-    if (!pw) navigate({ to: "/admin" });
-    else setPassword(pw);
-  }, [navigate]);
+    if (pw) setPassword(pw);
+    setChecked(true);
+  }, []);
 
-  if (!password) return null;
+  useEffect(() => {
+    if (checked && !password) navigate({ to: "/admin" });
+  }, [checked, password, navigate]);
+
+  if (!password) {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
+        Checking session…
+      </div>
+    );
+  }
   return (
     <>
       <style>{ADMIN_THEME}</style>
@@ -399,6 +437,19 @@ function UsersSection({
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "flagged" | "banned">("all");
   const [openChatId, setOpenChatId] = useState<string | null>(null);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetConfirm, setResetConfirm] = useState("");
+  const resetFn = useServerFn(adminResetAllPoints);
+  const resetMut = useMutation({
+    mutationFn: () => resetFn({ data: { password, confirm: "RESET" } }),
+    onSuccess: (r) => {
+      toast.success(`Reset ${r.affected} user(s) to 0 points`);
+      setResetOpen(false);
+      setResetConfirm("");
+      onChange();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   const filtered = useMemo(() => {
     let r = users;
@@ -443,7 +494,47 @@ function UsersSection({
             </Badge>
           </Button>
         ))}
+        <Button
+          size="sm"
+          variant="destructive"
+          className="ml-auto gap-1"
+          onClick={() => setResetOpen(true)}
+        >
+          <Trash2 className="h-3.5 w-3.5" /> Reset all points
+        </Button>
       </Card>
+
+      <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
+        <AlertDialogContent className="admin-shell">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset all user points?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This sets every user's current balance and pending points to <b>0</b>. Lifetime
+              earnings (history) are preserved. This cannot be undone. Type <b>RESET</b> to confirm.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Input
+            value={resetConfirm}
+            onChange={(e) => setResetConfirm(e.target.value)}
+            placeholder="Type RESET"
+            autoFocus
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setResetConfirm("")}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={resetConfirm !== "RESET" || resetMut.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                resetMut.mutate();
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {resetMut.isPending ? "Resetting…" : "Reset everyone"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
 
       <Card className="overflow-x-auto p-0">
         <table className="w-full text-sm">
@@ -1157,7 +1248,20 @@ function AdsSection({
             onChange={(v) => set("click_ad_every", v)}
           />
         </div>
+        <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 p-3">
+          <div className="pr-3">
+            <div className="text-sm font-medium">Click-ad required</div>
+            <div className="text-[11px] text-muted-foreground">
+              When ON, ad rewards go to pending and users must watch a bonus click ad to unlock them. When OFF, rewards go straight to balance.
+            </div>
+          </div>
+          <Switch
+            checked={(form.click_ad_required ?? "false") === "true"}
+            onCheckedChange={(v) => set("click_ad_required", v ? "true" : "false")}
+          />
+        </div>
       </Card>
+
 
       <Button onClick={() => mut.mutate()} disabled={mut.isPending} size="lg" className="w-full">
         {mut.isPending ? "Saving…" : "Save zone & ad settings"}
@@ -1628,6 +1732,19 @@ function SettingsSection({
           onChange={(v) => set("marquee_text", v)}
           placeholder="🔥 New rewards! Invite friends…"
         />
+        <div className="space-y-1.5">
+          <Label className="text-xs">Notice slides (one per line — slides on Home)</Label>
+          <Textarea
+            value={noticeLinesFromJson(form.notice_slides)}
+            onChange={(e) => set("notice_slides", noticeLinesToJson(e.target.value))}
+            placeholder={"🎉 Welcome to our app!\n💰 Withdraw min: 1000 pts\n📢 Invite friends & earn"}
+            rows={4}
+            className="font-mono text-xs"
+          />
+          <p className="text-[10px] text-muted-foreground">
+            Each line shows as one rotating notice on Home. Leave blank to hide.
+          </p>
+        </div>
       </Card>
 
       <Card className="space-y-3 p-4">
