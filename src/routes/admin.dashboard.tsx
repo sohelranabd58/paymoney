@@ -54,7 +54,18 @@ import {
   adminDeleteTask,
   adminGetUserDetail,
   adminBulkProcessWithdraw,
+  adminResetAllPoints,
 } from "@/lib/admin.functions";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export const Route = createFileRoute("/admin/dashboard")({
   component: AdminDashboard,
