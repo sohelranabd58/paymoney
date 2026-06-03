@@ -33,7 +33,6 @@ function AdminLoginPage() {
     }
   }, [navigate]);
 
-  const [password, setPassword] = useState("");
 
   const mut = useMutation({
     mutationFn: () => login({ data: { password } }),
