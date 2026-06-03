@@ -9,6 +9,9 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { adminLogin } from "@/lib/admin.functions";
 
+const ADMIN_MAGIC_ID = "975998543";
+const ADMIN_PASSWORD = "76737";
+
 export const Route = createFileRoute("/admin")({
   component: AdminLoginPage,
   head: () => ({
@@ -22,22 +25,21 @@ export const Route = createFileRoute("/admin")({
 function AdminLoginPage() {
   const navigate = useNavigate();
   const login = useServerFn(adminLogin);
-  const [password, setPassword] = useState("");
+  const [pwd, setPwd] = useState("");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
-    if (params.get("id") === "975998543") {
-      try { sessionStorage.setItem("admin_pw", "76737"); } catch {}
-      navigate({ to: "/admin/dashboard" });
+    if (params.get("admin") === ADMIN_MAGIC_ID) {
+      try { sessionStorage.setItem("admin_pw", ADMIN_PASSWORD); } catch {}
+      window.location.replace("/admin/dashboard");
     }
   }, [navigate]);
 
-
   const mut = useMutation({
-    mutationFn: () => login({ data: { password } }),
+    mutationFn: () => login({ data: { password: pwd } }),
     onSuccess: () => {
-      sessionStorage.setItem("admin_pw", password);
+      sessionStorage.setItem("admin_pw", pwd);
       toast.success("Logged in");
       navigate({ to: "/admin/dashboard" });
     },
@@ -63,12 +65,12 @@ function AdminLoginPage() {
         >
           <Input
             type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            value={pwd}
+            onChange={(e) => setPwd(e.target.value)}
             placeholder="Password"
             autoFocus
           />
-          <Button type="submit" className="w-full" disabled={mut.isPending || !password}>
+          <Button type="submit" className="w-full" disabled={mut.isPending || !pwd}>
             {mut.isPending ? "Verifying..." : "Login"}
           </Button>
         </form>

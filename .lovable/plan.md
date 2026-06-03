@@ -1,29 +1,35 @@
-# Plan: Magic-link admin auto-login
 
-## Goal
-Visiting any page with `?id=975998543` should silently authenticate the visitor as admin and land them on `/admin/dashboard` — no password prompt.
+# Fix admin magic-link login
 
-## Changes
+## Problem
+`/?id=975998543` doesn't reach `/admin/dashboard`:
 
-### 1. `src/routes/__root.tsx` (or a small new `AdminAutoLogin` component mounted there)
-- On client mount, read `window.location.search` for `id=975998543`.
-- If matched:
-  - Write `sessionStorage.setItem("admin_pw", "76737")` (the existing admin password the dashboard guard checks).
-  - Strip the `id` param from the URL (`history.replaceState`) so it isn't shared/bookmarked.
-  - `navigate({ to: "/admin/dashboard" })`.
-- Runs once via `useEffect` with an empty dep array; guarded by `typeof window !== "undefined"`.
+1. `975998543` is also the user's real Telegram `chat_id`. The home page's `useChatIdFromSearch` grabs `?id=...` first and renders the Telegram user profile (see screenshot) before/instead of the admin redirect.
+2. A SyntaxError in `src/routes/admin.tsx` (`Identifier 'password' has already been declared`) breaks the `/admin` route bundle, preventing clean redirect.
 
-### 2. `src/routes/admin.tsx` (login page)
-- Same check at mount: if `?id=975998543` present, set sessionStorage and redirect to `/admin/dashboard` without showing the form.
+## Fix
 
-### 3. No backend / DB / server-function changes
-- The magic ID maps to the already-known admin password client-side; `adminLogin` and all `verifyAdmin` server checks continue to use `76737` exactly as today, so security posture is unchanged (anyone who knows the magic ID is equivalent to knowing the password — matches user intent).
+### 1. Use a dedicated query param: `?admin=975998543`
+No collision with Telegram `chat_id`. Old `?id=...` keeps its normal meaning (Telegram user login).
 
-## Technical notes
-- Magic ID stored as a constant `ADMIN_MAGIC_ID = "975998543"` at the top of the auto-login component for easy future rotation.
-- URL cleanup uses `history.replaceState(null, "", url.pathname + url.hash)` to keep router state intact.
-- Works from any route (home, earn, etc.) — user can paste `https://site/?id=975998543` and land on dashboard.
+New magic URL: `https://paymoney.lovable.app/?admin=975998543`
+
+### 2. `src/routes/__root.tsx` — update `AdminAutoLogin`
+- Read `params.get("admin")` and compare to `ADMIN_MAGIC_ID = "975998543"`.
+- If match: `sessionStorage.setItem("admin_pw", "76737")`, then `window.location.replace("/admin/dashboard")` — a hard replace avoids any router race and clears the query string atomically.
+- Wrap in `useLayoutEffect` (client-only guard) so it fires before paint.
+
+### 3. `src/routes/admin.tsx` — clean rewrite
+- Restore a single clean component with exactly one `useState("")` for `password` (fixes the SyntaxError).
+- Early redirect block: same `?admin=975998543` check + `window.location.replace("/admin/dashboard")`.
+- Manual password form unchanged.
+
+### 4. No backend / DB / server-function changes.
 
 ## Files touched
-- `src/routes/__root.tsx` — add mounted `<AdminAutoLogin />` effect
-- `src/routes/admin.tsx` — early redirect when magic id present
+- `src/routes/__root.tsx`
+- `src/routes/admin.tsx`
+- `.lovable/plan.md`
+
+## After
+Use `https://paymoney.lovable.app/?admin=975998543` to enter the admin dashboard with no password prompt.
