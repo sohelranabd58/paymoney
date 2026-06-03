@@ -4,10 +4,10 @@ import {
   Link,
   createRootRouteWithContext,
   useRouter,
-  useNavigate,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
+
 import { useEffect } from "react";
 import { Toaster } from "@/components/ui/sonner";
 
