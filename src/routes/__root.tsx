@@ -8,26 +8,74 @@ import {
   Scripts,
 } from "@tanstack/react-router";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Toaster } from "@/components/ui/sonner";
+import { toast } from "sonner";
 
 import appCss from "../styles.css?url";
 
 const ADMIN_MAGIC_ID = "975998543";
 const ADMIN_PASSWORD = "76737";
 
-function AdminAutoLogin() {
+function getAdminParam(): string | null {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("admin");
+}
+
+const initialAdminParam = typeof window !== "undefined" ? getAdminParam() : null;
+const shouldRedirectInitially = initialAdminParam === ADMIN_MAGIC_ID;
+
+function AdminAutoLogin({ onState }: { onState: (s: "redirecting" | "invalid" | "idle") => void }) {
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("admin") === ADMIN_MAGIC_ID) {
+    const param = getAdminParam();
+    if (param === null) {
+      onState("idle");
+      return;
+    }
+    if (param === ADMIN_MAGIC_ID) {
       try {
         sessionStorage.setItem("admin_pw", ADMIN_PASSWORD);
       } catch {}
+      onState("redirecting");
       window.location.replace("/admin/dashboard");
+      return;
     }
-  }, []);
+    onState("invalid");
+    toast.error("Invalid admin link. Access denied.");
+  }, [onState]);
   return null;
+}
+
+function AdminRedirectScreen() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="text-center">
+        <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+        <p className="text-sm text-muted-foreground">Signing you into admin…</p>
+      </div>
+    </div>
+  );
+}
+
+function AdminInvalidScreen() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="max-w-md text-center">
+        <h1 className="text-xl font-semibold text-destructive">Invalid admin link</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          The admin token in this URL is missing or incorrect. Use the correct magic link, or sign in manually.
+        </p>
+        <div className="mt-6 flex justify-center gap-2">
+          <a href="/admin" className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">
+            Go to admin login
+          </a>
+          <a href="/" className="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent">
+            Home
+          </a>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 
@@ -134,11 +182,20 @@ function RootShell({ children }: { children: React.ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  const [adminState, setAdminState] = useState<"redirecting" | "invalid" | "idle">(
+    shouldRedirectInitially ? "redirecting" : "idle",
+  );
 
   return (
     <QueryClientProvider client={queryClient}>
-      <AdminAutoLogin />
-      <Outlet />
+      <AdminAutoLogin onState={setAdminState} />
+      {adminState === "redirecting" ? (
+        <AdminRedirectScreen />
+      ) : adminState === "invalid" ? (
+        <AdminInvalidScreen />
+      ) : (
+        <Outlet />
+      )}
       <Toaster position="top-center" />
     </QueryClientProvider>
   );
