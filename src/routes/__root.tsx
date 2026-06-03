@@ -182,11 +182,20 @@ function RootShell({ children }: { children: React.ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  const [adminState, setAdminState] = useState<"redirecting" | "invalid" | "idle">(
+    shouldRedirectInitially ? "redirecting" : "idle",
+  );
 
   return (
     <QueryClientProvider client={queryClient}>
-      <AdminAutoLogin />
-      <Outlet />
+      <AdminAutoLogin onState={setAdminState} />
+      {adminState === "redirecting" ? (
+        <AdminRedirectScreen />
+      ) : adminState === "invalid" ? (
+        <AdminInvalidScreen />
+      ) : (
+        <Outlet />
+      )}
       <Toaster position="top-center" />
     </QueryClientProvider>
   );
