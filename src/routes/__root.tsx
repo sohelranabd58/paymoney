@@ -141,6 +141,7 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
+      <AdminAutoLogin />
       <Outlet />
       <Toaster position="top-center" />
     </QueryClientProvider>
