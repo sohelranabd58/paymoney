@@ -55,6 +55,8 @@ import {
   adminGetUserDetail,
   adminBulkProcessWithdraw,
   adminResetAllPoints,
+  adminListPendingTasks,
+  adminReviewTask,
 } from "@/lib/admin.functions";
 import {
   AlertDialog,
