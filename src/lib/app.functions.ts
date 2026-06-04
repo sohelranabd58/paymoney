@@ -603,8 +603,19 @@ export const listTasks = createServerFn({ method: "POST" })
   });
 
 export const claimTask = createServerFn({ method: "POST" })
-  .inputValidator((d: { chatId: string; taskId: string }) =>
-    z.object({ chatId: chatIdSchema, taskId: z.string().uuid() }).parse(d),
+  .inputValidator(
+    (d: { chatId: string; taskId: string; proofDataUrl?: string }) =>
+      z
+        .object({
+          chatId: chatIdSchema,
+          taskId: z.string().uuid(),
+          proofDataUrl: z
+            .string()
+            .max(8_000_000)
+            .regex(/^data:image\/(png|jpe?g|webp);base64,/i)
+            .optional(),
+        })
+        .parse(d),
   )
   .handler(async ({ data }) => {
     const { data: task, error: te } = await supabaseAdmin
@@ -632,8 +643,10 @@ export const claimTask = createServerFn({ method: "POST" })
       .maybeSingle();
     if (existing) throw new Error("Already submitted");
 
-    // verify
     let status: "approved" | "pending" = "approved";
+    let proofPath: string | null = null;
+    const requireProof = Boolean((task as { require_proof?: boolean }).require_proof);
+
     if (task.verify_method === "telegram_member" && task.channel_username) {
       const settings = await getSettings();
       const botToken = settings.bot_token;
@@ -657,10 +670,29 @@ export const claimTask = createServerFn({ method: "POST" })
       status = "pending";
     }
 
+    if (requireProof && task.verify_method === "manual" && !data.proofDataUrl) {
+      throw new Error("Screenshot proof is required for this task");
+    }
+    if (data.proofDataUrl) {
+      const match = data.proofDataUrl.match(/^data:image\/(png|jpe?g|webp);base64,(.+)$/i);
+      if (!match) throw new Error("Invalid screenshot format");
+      const ext = match[1].toLowerCase() === "jpeg" ? "jpg" : match[1].toLowerCase();
+      const bytes = Buffer.from(match[2], "base64");
+      if (bytes.byteLength > 5 * 1024 * 1024) throw new Error("Screenshot too large (max 5MB)");
+      const path = `${data.chatId}/${data.taskId}-${Date.now()}.${ext}`;
+      const up = await supabaseAdmin.storage
+        .from("task-proofs")
+        .upload(path, bytes, { contentType: `image/${ext}`, upsert: false });
+      if (up.error) throw new Error(`Upload failed: ${up.error.message}`);
+      proofPath = path;
+      if (task.verify_method === "manual") status = "pending";
+    }
+
     await supabaseAdmin.from("task_completions").insert({
       chat_id: data.chatId,
       task_id: data.taskId,
       status,
+      proof_url: proofPath,
     });
 
     if (status === "approved") {

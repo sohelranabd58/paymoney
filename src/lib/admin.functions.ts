@@ -429,6 +429,7 @@ export const adminSaveTask = createServerFn({ method: "POST" })
         channel_username?: string;
         active: boolean;
         sort_order: number;
+        require_proof?: boolean;
       };
     }) =>
       z
@@ -452,6 +453,7 @@ export const adminSaveTask = createServerFn({ method: "POST" })
             channel_username: z.string().max(64).optional(),
             active: z.boolean(),
             sort_order: z.number().int(),
+            require_proof: z.boolean().optional(),
           }),
         })
         .parse(d),
@@ -616,4 +618,116 @@ export const adminResetAllPoints = createServerFn({ method: "POST" })
     const { data: rpcData, error } = await supabaseAdmin.rpc("admin_reset_all_points");
     if (error) throw new Error(error.message);
     return { ok: true, affected: Number(rpcData ?? 0) };
+  });
+
+// -------- Task review (manual verification with screenshots) --------
+
+export const adminListPendingTasks = createServerFn({ method: "POST" })
+  .inputValidator((d: { password: string }) =>
+    z.object({ password: z.string().min(1).max(100) }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    await verifyAdmin(data.password);
+    const { data: rows, error } = await supabaseAdmin
+      .from("task_completions")
+      .select("id,chat_id,task_id,status,proof_url,completed_at")
+      .eq("status", "pending")
+      .order("completed_at", { ascending: false })
+      .limit(200);
+    if (error) throw new Error(error.message);
+
+    const taskIds = Array.from(new Set((rows ?? []).map((r) => r.task_id)));
+    const tasks = taskIds.length
+      ? (await supabaseAdmin
+          .from("tasks")
+          .select("id,title,reward_points,icon")
+          .in("id", taskIds)).data ?? []
+      : [];
+    const tmap = new Map(tasks.map((t) => [t.id, t]));
+
+    // sign proof URLs (1h)
+    const out = await Promise.all(
+      (rows ?? []).map(async (r) => {
+        let signed: string | null = null;
+        if (r.proof_url) {
+          const s = await supabaseAdmin.storage
+            .from("task-proofs")
+            .createSignedUrl(r.proof_url, 3600);
+          signed = s.data?.signedUrl ?? null;
+        }
+        const t = tmap.get(r.task_id);
+        return {
+          id: r.id,
+          chat_id: r.chat_id,
+          task_id: r.task_id,
+          completed_at: r.completed_at,
+          proof_url: signed,
+          task_title: t?.title ?? "(deleted task)",
+          task_icon: t?.icon ?? null,
+          reward_points: Number(t?.reward_points ?? 0),
+        };
+      }),
+    );
+    return out;
+  });
+
+export const adminReviewTask = createServerFn({ method: "POST" })
+  .inputValidator(
+    (d: { password: string; id: string; action: "approve" | "reject"; note?: string }) =>
+      z
+        .object({
+          password: z.string().min(1).max(100),
+          id: z.string().uuid(),
+          action: z.enum(["approve", "reject"]),
+          note: z.string().max(500).optional(),
+        })
+        .parse(d),
+  )
+  .handler(async ({ data }) => {
+    await verifyAdmin(data.password);
+    const { data: row, error } = await supabaseAdmin
+      .from("task_completions")
+      .select("id,chat_id,task_id,status")
+      .eq("id", data.id)
+      .single();
+    if (error || !row) throw new Error("Submission not found");
+    if (row.status !== "pending") throw new Error("Already processed");
+
+    const newStatus = data.action === "approve" ? "approved" : "rejected";
+
+    if (data.action === "approve") {
+      const { data: task } = await supabaseAdmin
+        .from("tasks")
+        .select("reward_points")
+        .eq("id", row.task_id)
+        .single();
+      const reward = Number(task?.reward_points ?? 0);
+      if (reward > 0) {
+        const { data: u } = await supabaseAdmin
+          .from("app_users")
+          .select("points,total_earned")
+          .eq("chat_id", row.chat_id)
+          .single();
+        if (u) {
+          await supabaseAdmin
+            .from("app_users")
+            .update({
+              points: Number(u.points) + reward,
+              total_earned: Number(u.total_earned) + reward,
+            })
+            .eq("chat_id", row.chat_id);
+        }
+      }
+    }
+
+    await supabaseAdmin
+      .from("task_completions")
+      .update({
+        status: newStatus,
+        reviewed_at: new Date().toISOString(),
+        reviewer_note: data.note ?? null,
+      })
+      .eq("id", data.id);
+
+    return { ok: true };
   });

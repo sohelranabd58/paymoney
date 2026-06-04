@@ -1,29 +1,51 @@
-## Plan
+# Plan
 
-1. Fix the core routing bug
-   - The current `/admin/dashboard` route is nested under `/admin`, but `src/routes/admin.tsx` renders only the login page and no child outlet.
-   - Update `src/routes/admin.tsx` so:
-     - `/admin` shows the password login form.
-     - `/admin/dashboard` renders the dashboard child route, not the login page again.
-     - The magic link still sets the admin session and redirects to `/admin/dashboard`.
+## 1. Tasks page — require Open before Verify & claim
 
-2. Make login behavior clear and reliable
-   - Keep the admin password as `76737`.
-   - If login succeeds, store the password in `sessionStorage` and navigate to the dashboard.
-   - If login fails, show a visible error toast instead of appearing stuck.
-   - Add a fallback message on the dashboard if the saved admin session becomes invalid, with a direct link back to `/admin`.
+In `src/routes/tasks.tsx`:
+- Track per-task "opened" state in `localStorage` (key: `task_opened_<taskId>`), set when the user clicks the **Open** link.
+- Hide the **Verify & claim** button until the task has been opened. Show a small hint: "Open the link first, then come back to claim."
+- For tasks with `task_type === "join_channel"` (Telegram), the same gate applies — they must tap Open at least once.
+- If a task has no `url` (custom), skip the gate.
 
-3. Keep admin password changeable
-   - Preserve the existing Settings > Security > Admin password field.
-   - Make changing the password reliable: when a new password is saved, update the local admin session to the new password so the admin does not get locked out immediately.
-   - Do not expose the existing admin password in fetched settings.
+## 2. Manual verification with screenshot upload
 
-4. Audit all admin sections for workable state
-   - Check Overview, Users, Withdrawals, Ads & Zones, Tasks, Methods, Levels, and Settings for broken routing/loading patterns and obvious mutation errors.
-   - Fix any section that cannot load/save because of route nesting, stale password session, missing error UI, or incorrect server-function handling.
+When a task's `verify_method` is `manual`, require the user to upload a screenshot before submission. Admin reviews it and approves/rejects.
 
-5. Verify in preview
-   - Test `/admin` with password `76737`.
-   - Confirm it lands on `/admin/dashboard` and shows the real admin dashboard.
-   - Test `/?admin=975998543` redirects to `/admin/dashboard` and does not show the user home page.
-   - Check browser console/network for errors after dashboard load.
+### Database (migration)
+- Add columns to `task_completions`:
+  - `proof_url text` — uploaded screenshot URL
+  - `reviewed_at timestamptz`
+  - `reviewer_note text`
+- Add column to `tasks`: `require_proof boolean default false` (auto-true when verify_method = manual; admin can also enable for other manual tasks).
+- Create public storage bucket `task-proofs` with policy allowing anon insert (chat_id-scoped path) and public read.
+
+### User flow (`src/routes/tasks.tsx`)
+- For manual tasks, after Open is clicked, show a file input + preview. On submit, upload to `task-proofs/<chatId>/<taskId>-<timestamp>.jpg`, then call `claimTask` with `proof_url`.
+- Update `claimTask` in `src/lib/app.functions.ts` to accept optional `proofUrl` and store it on `task_completions`. Reject manual submissions without proof when `require_proof` is on.
+
+### Admin flow (`src/routes/admin.dashboard.tsx` + `src/lib/admin.functions.ts`)
+- New section/tab **Task Reviews** listing pending manual completions with: chat_id, task title, reward, screenshot thumbnail (click to enlarge), Approve / Reject buttons + optional note.
+- New server fns: `adminListPendingTaskCompletions`, `adminReviewTaskCompletion({id, action, note})`.
+  - Approve → set status `approved`, credit user points + total_earned.
+  - Reject → set status `rejected`, no credit (do not auto-refund since nothing was deducted).
+- Add Task Reviews count badge to overview.
+
+## 3. Fix "Reset all points" error
+
+The Supabase Data API rejects bare UPDATEs without a WHERE clause. Fix the SQL function `admin_reset_all_points` to use an explicit predicate:
+
+```sql
+UPDATE public.app_users
+SET points = 0, pending_points = 0, cycle_ads = 0
+WHERE chat_id IS NOT NULL;
+```
+
+Ship as a migration replacing the function definition.
+
+## Files changed
+- `src/routes/tasks.tsx` — Open-gate + screenshot upload UI
+- `src/lib/app.functions.ts` — `claimTask` accepts `proofUrl`, validates proof requirement
+- `src/lib/admin.functions.ts` — pending list + review server fns
+- `src/routes/admin.dashboard.tsx` — Task Reviews tab
+- Migration: `task_completions` columns, `tasks.require_proof`, `task-proofs` bucket + policies, replace `admin_reset_all_points`

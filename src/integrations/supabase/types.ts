@@ -135,6 +135,9 @@ export type Database = {
           chat_id: string
           completed_at: string
           id: string
+          proof_url: string | null
+          reviewed_at: string | null
+          reviewer_note: string | null
           status: string
           task_id: string
         }
@@ -142,6 +145,9 @@ export type Database = {
           chat_id: string
           completed_at?: string
           id?: string
+          proof_url?: string | null
+          reviewed_at?: string | null
+          reviewer_note?: string | null
           status?: string
           task_id: string
         }
@@ -149,6 +155,9 @@ export type Database = {
           chat_id?: string
           completed_at?: string
           id?: string
+          proof_url?: string | null
+          reviewed_at?: string | null
+          reviewer_note?: string | null
           status?: string
           task_id?: string
         }
@@ -170,6 +179,7 @@ export type Database = {
           description: string | null
           icon: string | null
           id: string
+          require_proof: boolean
           reward_points: number
           sort_order: number
           task_type: string
@@ -184,6 +194,7 @@ export type Database = {
           description?: string | null
           icon?: string | null
           id?: string
+          require_proof?: boolean
           reward_points?: number
           sort_order?: number
           task_type?: string
@@ -198,6 +209,7 @@ export type Database = {
           description?: string | null
           icon?: string | null
           id?: string
+          require_proof?: boolean
           reward_points?: number
           sort_order?: number
           task_type?: string

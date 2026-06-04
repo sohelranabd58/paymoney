@@ -55,6 +55,8 @@ import {
   adminGetUserDetail,
   adminBulkProcessWithdraw,
   adminResetAllPoints,
+  adminListPendingTasks,
+  adminReviewTask,
 } from "@/lib/admin.functions";
 import {
   AlertDialog,
@@ -80,6 +82,7 @@ type Section =
   | "withdrawals"
   | "ads"
   | "tasks"
+  | "reviews"
   | "methods"
   | "levels"
   | "settings";
@@ -90,6 +93,7 @@ const NAV: { id: Section; label: string; icon: React.ComponentType<{ className?:
   { id: "withdrawals", label: "Withdrawals", icon: Wallet },
   { id: "ads", label: "Ads & Zones", icon: Layers },
   { id: "tasks", label: "Tasks", icon: ListChecks },
+  { id: "reviews", label: "Task Reviews", icon: ShieldAlert },
   { id: "methods", label: "Methods", icon: CreditCard },
   { id: "levels", label: "Levels", icon: Trophy },
   { id: "settings", label: "Settings", icon: Settings },
@@ -280,6 +284,7 @@ function Shell({ password }: { password: string }) {
                 )}
                 {section === "ads" && <AdsSection password={password} settings={data.settings} onSaved={refresh} />}
                 {section === "tasks" && <TasksSection password={password} tasks={data.tasks} onChange={refresh} />}
+                {section === "reviews" && <ReviewsSection password={password} />}
                 {section === "methods" && <MethodsSection password={password} methods={data.methods} onChange={refresh} />}
                 {section === "levels" && <LevelsSection password={password} settings={data.settings} onSaved={refresh} />}
                 {section === "settings" && <SettingsSection password={password} settings={data.settings} onSaved={refresh} />}
@@ -1433,6 +1438,7 @@ type TaskRow = {
   channel_username: string | null;
   active: boolean;
   sort_order: number;
+  require_proof?: boolean;
 };
 
 function TasksSection({
@@ -1466,6 +1472,7 @@ function TasksSection({
             channel_username: editing.channel_username ?? "",
             active: editing.active ?? true,
             sort_order: Number(editing.sort_order ?? 0),
+            require_proof: Boolean(editing.require_proof),
           },
         },
       });
@@ -1573,6 +1580,13 @@ function TasksSection({
           <div className="flex items-center gap-2">
             <Switch checked={editing.active ?? true} onCheckedChange={(v) => setEditing({ ...editing, active: v })} />
             <span className="text-sm">Active</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch
+              checked={Boolean(editing.require_proof)}
+              onCheckedChange={(v) => setEditing({ ...editing, require_proof: v })}
+            />
+            <span className="text-sm">Require screenshot proof (manual review)</span>
           </div>
           <div className="flex gap-2">
             <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !editing.title}>
@@ -1825,6 +1839,115 @@ function SettingsSection({
       <Button onClick={() => mut.mutate()} disabled={mut.isPending} size="lg" className="w-full">
         {mut.isPending ? "Saving…" : "Save all settings"}
       </Button>
+    </div>
+  );
+}
+
+// ============================================================
+// TASK REVIEWS (manual verification with screenshots)
+// ============================================================
+
+function ReviewsSection({ password }: { password: string }) {
+  const qc = useQueryClient();
+  const list = useServerFn(adminListPendingTasks);
+  const review = useServerFn(adminReviewTask);
+  const [noteById, setNoteById] = useState<Record<string, string>>({});
+  const [zoom, setZoom] = useState<string | null>(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["admin-task-reviews"],
+    queryFn: () => list({ data: { password } }),
+  });
+
+  const mut = useMutation({
+    mutationFn: (v: { id: string; action: "approve" | "reject" }) =>
+      review({ data: { password, id: v.id, action: v.action, note: noteById[v.id] } }),
+    onSuccess: (_r, v) => {
+      toast.success(v.action === "approve" ? "Approved & paid" : "Rejected");
+      qc.invalidateQueries({ queryKey: ["admin-task-reviews"] });
+      qc.invalidateQueries({ queryKey: ["admin-all"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  if (isLoading) return <div className="py-10 text-center text-sm text-muted-foreground">Loading…</div>;
+
+  return (
+    <div className="space-y-3">
+      <Card className="p-3 text-sm">
+        Pending manual task submissions: <b>{data?.length ?? 0}</b>
+      </Card>
+
+      {data && data.length === 0 && (
+        <Card className="p-6 text-center text-sm text-muted-foreground">
+          No pending submissions.
+        </Card>
+      )}
+
+      {data?.map((r) => (
+        <Card key={r.id} className="space-y-3 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">{r.task_icon || "🎁"}</span>
+                <span className="truncate font-semibold">{r.task_title}</span>
+                <Badge variant="secondary">+{r.reward_points}</Badge>
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                User: <span className="font-mono">{r.chat_id}</span> · {new Date(r.completed_at).toLocaleString()}
+              </div>
+            </div>
+          </div>
+
+          {r.proof_url ? (
+            <button
+              type="button"
+              onClick={() => setZoom(r.proof_url)}
+              className="block w-full overflow-hidden rounded-md border border-border"
+            >
+              <img src={r.proof_url} alt="Proof" className="max-h-64 w-full object-contain bg-black/30" />
+            </button>
+          ) : (
+            <div className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
+              No screenshot attached.
+            </div>
+          )}
+
+          <Textarea
+            placeholder="Note to user (optional)"
+            rows={2}
+            value={noteById[r.id] ?? ""}
+            onChange={(e) => setNoteById({ ...noteById, [r.id]: e.target.value })}
+          />
+
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              onClick={() => mut.mutate({ id: r.id, action: "approve" })}
+              disabled={mut.isPending}
+            >
+              <Check className="mr-1 h-4 w-4" /> Approve & pay
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => mut.mutate({ id: r.id, action: "reject" })}
+              disabled={mut.isPending}
+            >
+              <X className="mr-1 h-4 w-4" /> Reject
+            </Button>
+          </div>
+        </Card>
+      ))}
+
+      {zoom && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setZoom(null)}
+        >
+          <img src={zoom} alt="Proof" className="max-h-full max-w-full rounded" />
+        </div>
+      )}
     </div>
   );
 }
