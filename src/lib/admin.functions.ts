@@ -429,6 +429,7 @@ export const adminSaveTask = createServerFn({ method: "POST" })
         channel_username?: string;
         active: boolean;
         sort_order: number;
+        require_proof?: boolean;
       };
     }) =>
       z
@@ -452,6 +453,7 @@ export const adminSaveTask = createServerFn({ method: "POST" })
             channel_username: z.string().max(64).optional(),
             active: z.boolean(),
             sort_order: z.number().int(),
+            require_proof: z.boolean().optional(),
           }),
         })
         .parse(d),
