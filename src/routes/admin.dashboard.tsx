@@ -1467,6 +1467,7 @@ function TasksSection({
             channel_username: editing.channel_username ?? "",
             active: editing.active ?? true,
             sort_order: Number(editing.sort_order ?? 0),
+            require_proof: Boolean(editing.require_proof),
           },
         },
       });
