@@ -284,6 +284,7 @@ function Shell({ password }: { password: string }) {
                 )}
                 {section === "ads" && <AdsSection password={password} settings={data.settings} onSaved={refresh} />}
                 {section === "tasks" && <TasksSection password={password} tasks={data.tasks} onChange={refresh} />}
+                {section === "reviews" && <ReviewsSection password={password} />}
                 {section === "methods" && <MethodsSection password={password} methods={data.methods} onChange={refresh} />}
                 {section === "levels" && <LevelsSection password={password} settings={data.settings} onSaved={refresh} />}
                 {section === "settings" && <SettingsSection password={password} settings={data.settings} onSaved={refresh} />}
