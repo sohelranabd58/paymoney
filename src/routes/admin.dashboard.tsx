@@ -1433,6 +1433,7 @@ type TaskRow = {
   channel_username: string | null;
   active: boolean;
   sort_order: number;
+  require_proof?: boolean;
 };
 
 function TasksSection({
