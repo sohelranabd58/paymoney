@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Outlet, useRouterState } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -13,7 +13,7 @@ const ADMIN_MAGIC_ID = "975998543";
 const ADMIN_PASSWORD = "76737";
 
 export const Route = createFileRoute("/admin")({
-  component: AdminLoginPage,
+  component: AdminRouteComponent,
   head: () => ({
     meta: [
       { title: "Admin — Login" },
@@ -21,6 +21,14 @@ export const Route = createFileRoute("/admin")({
     ],
   }),
 });
+
+function AdminRouteComponent() {
+  // When viewing /admin/dashboard (or any child), render only the child.
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const isExactAdmin = pathname === "/admin" || pathname === "/admin/";
+  if (!isExactAdmin) return <Outlet />;
+  return <AdminLoginPage />;
+}
 
 function AdminLoginPage() {
   const navigate = useNavigate();
@@ -33,17 +41,24 @@ function AdminLoginPage() {
     if (params.get("admin") === ADMIN_MAGIC_ID) {
       try { sessionStorage.setItem("admin_pw", ADMIN_PASSWORD); } catch {}
       window.location.replace("/admin/dashboard");
+      return;
     }
+    // If already logged in, jump straight to dashboard.
+    try {
+      if (sessionStorage.getItem("admin_pw")) {
+        navigate({ to: "/admin/dashboard" });
+      }
+    } catch {}
   }, [navigate]);
 
   const mut = useMutation({
     mutationFn: () => login({ data: { password: pwd } }),
     onSuccess: () => {
-      sessionStorage.setItem("admin_pw", pwd);
+      try { sessionStorage.setItem("admin_pw", pwd); } catch {}
       toast.success("Logged in");
       navigate({ to: "/admin/dashboard" });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toast.error(e.message || "Invalid password"),
   });
 
   return (
