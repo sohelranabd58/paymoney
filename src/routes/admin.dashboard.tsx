@@ -1842,3 +1842,112 @@ function SettingsSection({
     </div>
   );
 }
+
+// ============================================================
+// TASK REVIEWS (manual verification with screenshots)
+// ============================================================
+
+function ReviewsSection({ password }: { password: string }) {
+  const qc = useQueryClient();
+  const list = useServerFn(adminListPendingTasks);
+  const review = useServerFn(adminReviewTask);
+  const [noteById, setNoteById] = useState<Record<string, string>>({});
+  const [zoom, setZoom] = useState<string | null>(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["admin-task-reviews"],
+    queryFn: () => list({ data: { password } }),
+  });
+
+  const mut = useMutation({
+    mutationFn: (v: { id: string; action: "approve" | "reject" }) =>
+      review({ data: { password, id: v.id, action: v.action, note: noteById[v.id] } }),
+    onSuccess: (_r, v) => {
+      toast.success(v.action === "approve" ? "Approved & paid" : "Rejected");
+      qc.invalidateQueries({ queryKey: ["admin-task-reviews"] });
+      qc.invalidateQueries({ queryKey: ["admin-all"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  if (isLoading) return <div className="py-10 text-center text-sm text-muted-foreground">Loading…</div>;
+
+  return (
+    <div className="space-y-3">
+      <Card className="p-3 text-sm">
+        Pending manual task submissions: <b>{data?.length ?? 0}</b>
+      </Card>
+
+      {data && data.length === 0 && (
+        <Card className="p-6 text-center text-sm text-muted-foreground">
+          No pending submissions.
+        </Card>
+      )}
+
+      {data?.map((r) => (
+        <Card key={r.id} className="space-y-3 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">{r.task_icon || "🎁"}</span>
+                <span className="truncate font-semibold">{r.task_title}</span>
+                <Badge variant="secondary">+{r.reward_points}</Badge>
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                User: <span className="font-mono">{r.chat_id}</span> · {new Date(r.completed_at).toLocaleString()}
+              </div>
+            </div>
+          </div>
+
+          {r.proof_url ? (
+            <button
+              type="button"
+              onClick={() => setZoom(r.proof_url)}
+              className="block w-full overflow-hidden rounded-md border border-border"
+            >
+              <img src={r.proof_url} alt="Proof" className="max-h-64 w-full object-contain bg-black/30" />
+            </button>
+          ) : (
+            <div className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
+              No screenshot attached.
+            </div>
+          )}
+
+          <Textarea
+            placeholder="Note to user (optional)"
+            rows={2}
+            value={noteById[r.id] ?? ""}
+            onChange={(e) => setNoteById({ ...noteById, [r.id]: e.target.value })}
+          />
+
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              onClick={() => mut.mutate({ id: r.id, action: "approve" })}
+              disabled={mut.isPending}
+            >
+              <Check className="mr-1 h-4 w-4" /> Approve & pay
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => mut.mutate({ id: r.id, action: "reject" })}
+              disabled={mut.isPending}
+            >
+              <X className="mr-1 h-4 w-4" /> Reject
+            </Button>
+          </div>
+        </Card>
+      ))}
+
+      {zoom && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setZoom(null)}
+        >
+          <img src={zoom} alt="Proof" className="max-h-full max-w-full rounded" />
+        </div>
+      )}
+    </div>
+  );
+}
