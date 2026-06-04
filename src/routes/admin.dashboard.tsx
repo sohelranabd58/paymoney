@@ -1576,6 +1576,13 @@ function TasksSection({
             <Switch checked={editing.active ?? true} onCheckedChange={(v) => setEditing({ ...editing, active: v })} />
             <span className="text-sm">Active</span>
           </div>
+          <div className="flex items-center gap-2">
+            <Switch
+              checked={Boolean(editing.require_proof)}
+              onCheckedChange={(v) => setEditing({ ...editing, require_proof: v })}
+            />
+            <span className="text-sm">Require screenshot proof (manual review)</span>
+          </div>
           <div className="flex gap-2">
             <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !editing.title}>
               Save
