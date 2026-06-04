@@ -80,6 +80,7 @@ type Section =
   | "withdrawals"
   | "ads"
   | "tasks"
+  | "reviews"
   | "methods"
   | "levels"
   | "settings";
@@ -90,6 +91,7 @@ const NAV: { id: Section; label: string; icon: React.ComponentType<{ className?:
   { id: "withdrawals", label: "Withdrawals", icon: Wallet },
   { id: "ads", label: "Ads & Zones", icon: Layers },
   { id: "tasks", label: "Tasks", icon: ListChecks },
+  { id: "reviews", label: "Task Reviews", icon: ShieldAlert },
   { id: "methods", label: "Methods", icon: CreditCard },
   { id: "levels", label: "Levels", icon: Trophy },
   { id: "settings", label: "Settings", icon: Settings },
