@@ -68,6 +68,7 @@ export type Database = {
         Row: {
           banned: boolean
           chat_id: string
+          click_ad_opened_at: string | null
           created_at: string
           cycle_ads: number
           flagged: boolean
@@ -89,6 +90,7 @@ export type Database = {
         Insert: {
           banned?: boolean
           chat_id: string
+          click_ad_opened_at?: string | null
           created_at?: string
           cycle_ads?: number
           flagged?: boolean
@@ -110,6 +112,7 @@ export type Database = {
         Update: {
           banned?: boolean
           chat_id?: string
+          click_ad_opened_at?: string | null
           created_at?: string
           cycle_ads?: number
           flagged?: boolean
@@ -127,6 +130,60 @@ export type Database = {
           tg_profile_synced_at?: string | null
           tg_username?: string | null
           total_earned?: number
+        }
+        Relationships: []
+      }
+      sponsor_task_requests: {
+        Row: {
+          chat_id: string
+          created_at: string
+          created_task_id: string | null
+          description: string | null
+          icon: string | null
+          id: string
+          reviewed_at: string | null
+          reviewer_note: string | null
+          reward_points: number
+          status: string
+          task_type: string
+          title: string
+          total_cost: number
+          total_slots: number
+          url: string | null
+        }
+        Insert: {
+          chat_id: string
+          created_at?: string
+          created_task_id?: string | null
+          description?: string | null
+          icon?: string | null
+          id?: string
+          reviewed_at?: string | null
+          reviewer_note?: string | null
+          reward_points: number
+          status?: string
+          task_type?: string
+          title: string
+          total_cost: number
+          total_slots: number
+          url?: string | null
+        }
+        Update: {
+          chat_id?: string
+          created_at?: string
+          created_task_id?: string | null
+          description?: string | null
+          icon?: string | null
+          id?: string
+          reviewed_at?: string | null
+          reviewer_note?: string | null
+          reward_points?: number
+          status?: string
+          task_type?: string
+          title?: string
+          total_cost?: number
+          total_slots?: number
+          url?: string | null
         }
         Relationships: []
       }
@@ -175,13 +232,18 @@ export type Database = {
         Row: {
           active: boolean
           channel_username: string | null
+          completions_count: number
           created_at: string
           description: string | null
           icon: string | null
           id: string
+          max_completions: number | null
+          repeat_interval_seconds: number
           require_proof: boolean
           reward_points: number
           sort_order: number
+          source: string
+          sponsor_chat_id: string | null
           task_type: string
           title: string
           url: string | null
@@ -190,13 +252,18 @@ export type Database = {
         Insert: {
           active?: boolean
           channel_username?: string | null
+          completions_count?: number
           created_at?: string
           description?: string | null
           icon?: string | null
           id?: string
+          max_completions?: number | null
+          repeat_interval_seconds?: number
           require_proof?: boolean
           reward_points?: number
           sort_order?: number
+          source?: string
+          sponsor_chat_id?: string | null
           task_type?: string
           title: string
           url?: string | null
@@ -205,13 +272,18 @@ export type Database = {
         Update: {
           active?: boolean
           channel_username?: string | null
+          completions_count?: number
           created_at?: string
           description?: string | null
           icon?: string | null
           id?: string
+          max_completions?: number | null
+          repeat_interval_seconds?: number
           require_proof?: boolean
           reward_points?: number
           sort_order?: number
+          source?: string
+          sponsor_chat_id?: string | null
           task_type?: string
           title?: string
           url?: string | null
@@ -338,6 +410,11 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      admin_approve_sponsor_task: { Args: { p_id: string }; Returns: string }
+      admin_reject_sponsor_task: {
+        Args: { p_id: string; p_note: string }
+        Returns: undefined
+      }
       admin_reset_all_points: { Args: never; Returns: number }
       claim_ad_atomic: {
         Args: {
@@ -367,6 +444,20 @@ export type Database = {
           moved: number
           new_points: number
         }[]
+      }
+      mark_click_ad_opened: { Args: { p_chat_id: string }; Returns: undefined }
+      submit_sponsor_task_atomic: {
+        Args: {
+          p_chat_id: string
+          p_description: string
+          p_icon: string
+          p_reward: number
+          p_slots: number
+          p_task_type: string
+          p_title: string
+          p_url: string
+        }
+        Returns: string
       }
       submit_withdraw_atomic: {
         Args: {
