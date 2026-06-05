@@ -687,7 +687,7 @@ export const adminReviewTask = createServerFn({ method: "POST" })
     await verifyAdmin(data.password);
     const { data: row, error } = await supabaseAdmin
       .from("task_completions")
-      .select("id,chat_id,task_id,status")
+      .select("id,chat_id,task_id,status,proof_url")
       .eq("id", data.id)
       .single();
     if (error || !row) throw new Error("Submission not found");
@@ -726,8 +726,65 @@ export const adminReviewTask = createServerFn({ method: "POST" })
         status: newStatus,
         reviewed_at: new Date().toISOString(),
         reviewer_note: data.note ?? null,
+        proof_url: null,
       })
       .eq("id", data.id);
 
+    // Delete proof file from storage after review (privacy / storage hygiene)
+    if (row.proof_url) {
+      try {
+        await supabaseAdmin.storage.from("task-proofs").remove([row.proof_url]);
+      } catch (e) {
+        console.error("proof cleanup failed", e);
+      }
+    }
+
     return { ok: true };
   });
+
+// -------- Sponsor task moderation --------
+
+export const adminListSponsorRequests = createServerFn({ method: "POST" })
+  .inputValidator((d: { password: string }) =>
+    z.object({ password: z.string().min(1).max(100) }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    await verifyAdmin(data.password);
+    const { data: rows, error } = await (supabaseAdmin as never as {
+      from: (t: string) => { select: (s: string) => { order: (c: string, o: { ascending: boolean }) => { limit: (n: number) => Promise<{ data: unknown[] | null; error: { message: string } | null }> } } };
+    })
+      .from("sponsor_task_requests")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) throw new Error(error.message);
+    return (rows ?? []) as Array<{
+      id: string; chat_id: string; title: string; description: string | null;
+      icon: string | null; url: string | null; task_type: string;
+      reward_points: number; total_slots: number; total_cost: number;
+      status: string; reviewer_note: string | null; created_at: string;
+      reviewed_at: string | null;
+    }>;
+  });
+
+export const adminReviewSponsor = createServerFn({ method: "POST" })
+  .inputValidator((d: { password: string; id: string; action: "approve" | "reject"; note?: string }) =>
+    z.object({
+      password: z.string().min(1).max(100),
+      id: z.string().uuid(),
+      action: z.enum(["approve", "reject"]),
+      note: z.string().max(500).optional(),
+    }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    await verifyAdmin(data.password);
+    if (data.action === "approve") {
+      const { error } = await supabaseAdmin.rpc("admin_approve_sponsor_task" as never, { p_id: data.id } as never);
+      if (error) throw new Error(error.message);
+    } else {
+      const { error } = await supabaseAdmin.rpc("admin_reject_sponsor_task" as never, { p_id: data.id, p_note: data.note ?? null } as never);
+      if (error) throw new Error(error.message);
+    }
+    return { ok: true };
+  });
+
