@@ -450,6 +450,10 @@ export const adminSaveTask = createServerFn({ method: "POST" })
         active: boolean;
         sort_order: number;
         require_proof?: boolean;
+        source?: string;
+        sponsor_chat_id?: string;
+        max_completions?: number | null;
+        repeat_interval_seconds?: number;
       };
     }) =>
       z
@@ -458,7 +462,7 @@ export const adminSaveTask = createServerFn({ method: "POST" })
           task: z.object({
             id: z.string().uuid().optional(),
             title: z.string().trim().min(1).max(120),
-            description: z.string().max(500).optional(),
+            description: z.string().max(2000).optional(),
             icon: z.string().max(10).optional(),
             url: z
               .string()
@@ -474,6 +478,10 @@ export const adminSaveTask = createServerFn({ method: "POST" })
             active: z.boolean(),
             sort_order: z.number().int(),
             require_proof: z.boolean().optional(),
+            source: z.enum(["admin", "sponsor"]).optional(),
+            sponsor_chat_id: z.string().max(32).optional(),
+            max_completions: z.number().int().positive().max(1_000_000).nullable().optional(),
+            repeat_interval_seconds: z.number().int().min(0).max(60 * 60 * 24 * 365).optional(),
           }),
         })
         .parse(d),
@@ -482,14 +490,15 @@ export const adminSaveTask = createServerFn({ method: "POST" })
     await verifyAdmin(data.password);
     const payload = data.task;
     if (payload.id) {
-      const { error } = await supabaseAdmin.from("tasks").update(payload).eq("id", payload.id);
+      const { error } = await supabaseAdmin.from("tasks").update(payload as never).eq("id", payload.id);
       if (error) throw new Error(error.message);
     } else {
-      const { error } = await supabaseAdmin.from("tasks").insert(payload);
+      const { error } = await supabaseAdmin.from("tasks").insert(payload as never);
       if (error) throw new Error(error.message);
     }
     return { ok: true };
   });
+
 
 export const adminDeleteTask = createServerFn({ method: "POST" })
   .inputValidator((d: { password: string; id: string }) =>
