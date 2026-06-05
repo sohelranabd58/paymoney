@@ -185,6 +185,8 @@ function RootComponent() {
   const [adminState, setAdminState] = useState<"redirecting" | "invalid" | "idle">(
     shouldRedirectInitially ? "redirecting" : "idle",
   );
+  const pathname = typeof window !== "undefined" ? window.location.pathname : "";
+  const hideBanner = pathname.startsWith("/admin");
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -194,9 +196,26 @@ function RootComponent() {
       ) : adminState === "invalid" ? (
         <AdminInvalidScreen />
       ) : (
-        <Outlet />
+        <>
+          <Outlet />
+          {!hideBanner && <GlobalBanner />}
+        </>
       )}
       <Toaster position="top-center" />
     </QueryClientProvider>
   );
 }
+
+function GlobalBanner() {
+  // Lazy: only on client to avoid SSR hydration noise.
+  const [show, setShow] = useState(false);
+  useEffect(() => { setShow(true); }, []);
+  if (!show) return null;
+  const Comp = require("@/components/HighPerfBanner").HighPerfBanner;
+  return (
+    <div className="pointer-events-auto fixed inset-x-0 bottom-16 z-20 px-2">
+      <Comp />
+    </div>
+  );
+}
+

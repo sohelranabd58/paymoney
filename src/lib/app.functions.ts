@@ -84,16 +84,25 @@ function buildZonesAndMeta(settings: Record<string, string>, todayCounts?: { int
     app_name: settings.app_name ?? "Earn Rewards",
     welcome_message: settings.welcome_message ?? "Watch ads and earn points!",
     marquee_text: settings.marquee_text ?? "",
+    marquee_tasks_text: settings.marquee_tasks_text ?? "",
     notice_slides: noticeSlides,
     min_withdraw: Number(settings.min_withdraw ?? 1000),
     click_ad_every: Number(settings.click_ad_every ?? 10),
     click_ad_points: Number(settings.click_ad_points ?? 50),
+    click_ad_enabled: (settings.click_ad_enabled ?? "true") === "true",
+    click_ad_min_view_seconds: Number(settings.click_ad_min_view_seconds ?? 15),
+    sponsor_tasks_enabled: (settings.sponsor_tasks_enabled ?? "true") === "true",
+    sponsor_min_reward: Number(settings.sponsor_min_reward ?? 10),
+    sponsor_min_slots: Number(settings.sponsor_min_slots ?? 10),
+    global_banner_enabled: (settings.global_banner_enabled ?? "true") === "true",
     click_ad: {
       zone: clickZone,
       sdk_id: settings.click_ad_sdk_id || `show_${clickZone}`,
       points: Number(settings.click_ad_points ?? 50),
       every: Number(settings.click_ad_every ?? 10),
       required: (settings.click_ad_required ?? "false") === "true",
+      enabled: (settings.click_ad_enabled ?? "true") === "true",
+      min_view_seconds: Number(settings.click_ad_min_view_seconds ?? 15),
     },
     zones: {
       interstitial: {
@@ -591,15 +600,41 @@ export const listTasks = createServerFn({ method: "POST" })
         .order("sort_order", { ascending: true }),
       supabaseAdmin
         .from("task_completions")
-        .select("task_id,status")
-        .eq("chat_id", data.chatId),
+        .select("task_id,status,completed_at")
+        .eq("chat_id", data.chatId)
+        .order("completed_at", { ascending: false }),
     ]);
     if (tasks.error) throw new Error(tasks.error.message);
-    const doneMap = new Map((done.data ?? []).map((d) => [d.task_id, d.status]));
-    return (tasks.data ?? []).map((t) => ({
-      ...t,
-      completion_status: doneMap.get(t.id) ?? null,
-    }));
+    // Most recent completion per task_id
+    const latest = new Map<string, { status: string; completed_at: string }>();
+    for (const c of done.data ?? []) {
+      if (!latest.has(c.task_id)) {
+        latest.set(c.task_id, { status: c.status, completed_at: c.completed_at });
+      }
+    }
+    return (tasks.data ?? []).map((t) => {
+      const repeat = Number((t as { repeat_interval_seconds?: number }).repeat_interval_seconds ?? 0);
+      const last = latest.get(t.id);
+      let completion_status: string | null = last?.status ?? null;
+      let repeat_available_at: string | null = null;
+      let repeat_locked = false;
+      if (repeat > 0 && last && last.status === "approved") {
+        const next = new Date(new Date(last.completed_at).getTime() + repeat * 1000);
+        if (next.getTime() > Date.now()) {
+          repeat_available_at = next.toISOString();
+          repeat_locked = true;
+        } else {
+          // Treat as available again
+          completion_status = null;
+        }
+      }
+      return {
+        ...t,
+        completion_status,
+        repeat_available_at,
+        repeat_locked,
+      };
+    });
   });
 
 export const claimTask = createServerFn({ method: "POST" })
@@ -635,13 +670,27 @@ export const claimTask = createServerFn({ method: "POST" })
     if (user.banned) throw new Error("Account banned");
     if (user.flagged) throw new Error("Account flagged");
 
-    const { data: existing } = await supabaseAdmin
+    const repeat = Number((task as { repeat_interval_seconds?: number }).repeat_interval_seconds ?? 0);
+
+    const { data: latestCompletion } = await supabaseAdmin
       .from("task_completions")
-      .select("id,status")
+      .select("id,status,completed_at")
       .eq("chat_id", data.chatId)
       .eq("task_id", data.taskId)
+      .order("completed_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
-    if (existing) throw new Error("Already submitted");
+
+    if (latestCompletion) {
+      if (latestCompletion.status === "pending") throw new Error("Already submitted — pending review");
+      if (latestCompletion.status === "rejected") throw new Error("Previously rejected — contact support");
+      if (latestCompletion.status === "approved") {
+        if (repeat <= 0) throw new Error("Already completed");
+        const nextOk = new Date(latestCompletion.completed_at).getTime() + repeat * 1000;
+        const left = Math.ceil((nextOk - Date.now()) / 1000);
+        if (left > 0) throw new Error(`Available again in ${left}s`);
+      }
+    }
 
     let status: "approved" | "pending" = "approved";
     let proofPath: string | null = null;
@@ -708,3 +757,76 @@ export const claimTask = createServerFn({ method: "POST" })
     }
     return { status, earned: 0 };
   });
+
+// -------- Sponsor task submission (user spends points to advertise) --------
+
+const sponsorSchema = z.object({
+  chatId: chatIdSchema,
+  title: z.string().trim().min(3).max(120),
+  description: z.string().trim().max(2000).optional(),
+  icon: z.string().max(10).optional(),
+  url: z.string().url().max(500),
+  task_type: z.enum(["visit_url", "join_channel"]),
+  reward: z.number().int().positive().max(1_000_000),
+  slots: z.number().int().positive().max(1_000_000),
+});
+
+export const submitSponsorTask = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => sponsorSchema.parse(d))
+  .handler(async ({ data }) => {
+    const { data: newId, error } = await supabaseAdmin.rpc(
+      "submit_sponsor_task_atomic" as never,
+      {
+        p_chat_id: data.chatId,
+        p_title: data.title,
+        p_description: data.description ?? null,
+        p_icon: data.icon ?? "🎁",
+        p_url: data.url,
+        p_task_type: data.task_type,
+        p_reward: data.reward,
+        p_slots: data.slots,
+      } as never,
+    );
+    if (error) throw new Error(error.message);
+    return { id: newId as string, total_cost: data.reward * data.slots };
+  });
+
+export const listMySponsorRequests = createServerFn({ method: "POST" })
+  .inputValidator((d: { chatId: string }) => ({ chatId: chatIdSchema.parse(d.chatId) }))
+  .handler(async ({ data }) => {
+    const { data: rows, error } = await (
+      supabaseAdmin as never as {
+        from: (t: string) => {
+          select: (s: string) => {
+            eq: (c: string, v: string) => {
+              order: (c: string, o: { ascending: boolean }) => {
+                limit: (n: number) => Promise<{ data: unknown[] | null; error: { message: string } | null }>;
+              };
+            };
+          };
+        };
+      }
+    )
+      .from("sponsor_task_requests")
+      .select("id,title,reward_points,total_slots,total_cost,status,reviewer_note,created_at,reviewed_at")
+      .eq("chat_id", data.chatId)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (error) throw new Error(error.message);
+    return (rows ?? []) as Array<{
+      id: string; title: string; reward_points: number;
+      total_slots: number; total_cost: number; status: string;
+      reviewer_note: string | null; created_at: string; reviewed_at: string | null;
+    }>;
+  });
+
+// -------- Click-ad open tracking (for min view seconds) --------
+
+export const markClickAdOpened = createServerFn({ method: "POST" })
+  .inputValidator((d: { chatId: string }) => ({ chatId: chatIdSchema.parse(d.chatId) }))
+  .handler(async ({ data }) => {
+    const { error } = await supabaseAdmin.rpc("mark_click_ad_opened" as never, { p_chat_id: data.chatId } as never);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+

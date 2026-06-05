@@ -322,17 +322,37 @@ export const adminProcessWithdraw = createServerFn({ method: "POST" })
           .update({ points: Number(user.points) + Number(req.amount) })
           .eq("chat_id", req.chat_id);
       }
-    } else if (data.action === "approve" && redeemKey) {
-      // Call external redeem API
-      try {
-        const url = `https://sohel.pp.ua/main/bot/fackss/redeem_api.php?key=${encodeURIComponent(redeemKey)}&redeem=${encodeURIComponent(String(req.amount))}`;
-        const r = await fetch(url);
-        const text = (await r.text()).trim();
-        // try to extract a plausible code (alphanumeric chunk) — fall back to whole text
-        const m = text.match(/[A-Za-z0-9_-]{6,}/);
-        redeemCode = (m ? m[0] : text).slice(0, 80);
-      } catch (e) {
-        console.error("redeem api failed", e);
+    } else if (data.action === "approve") {
+      // Bot Points integration: credit user's bot account directly via redeem API.
+      if (req.method_name === "Bot Points") {
+        const botKey = process.env.BOT_REDEEM_KEY || sMap.bot_redeem_key;
+        if (!botKey) {
+          throw new Error("BOT_REDEEM_KEY not configured");
+        }
+        // account holds the bot user id (digits)
+        if (!/^\d{3,20}$/.test(String(req.account).trim())) {
+          throw new Error("Invalid bot user_id format");
+        }
+        try {
+          const url = `https://sohel.pp.ua/main/bot/fackss/redeem_api.php?key=${encodeURIComponent(botKey)}&action=add_points&user_id=${encodeURIComponent(String(req.account).trim())}&points=${encodeURIComponent(String(req.amount))}`;
+          const r = await fetch(url);
+          const text = (await r.text()).trim();
+          if (!r.ok) throw new Error(`Bot API ${r.status}: ${text.slice(0, 120)}`);
+          redeemCode = `BOT:${text.slice(0, 60)}`;
+        } catch (e) {
+          throw new Error(`Bot redeem failed: ${e instanceof Error ? e.message : "unknown"}`);
+        }
+      } else if (redeemKey) {
+        // Generic redeem-code generator for other methods
+        try {
+          const url = `https://sohel.pp.ua/main/bot/fackss/redeem_api.php?key=${encodeURIComponent(redeemKey)}&redeem=${encodeURIComponent(String(req.amount))}`;
+          const r = await fetch(url);
+          const text = (await r.text()).trim();
+          const m = text.match(/[A-Za-z0-9_-]{6,}/);
+          redeemCode = (m ? m[0] : text).slice(0, 80);
+        } catch (e) {
+          console.error("redeem api failed", e);
+        }
       }
     }
 
@@ -430,6 +450,10 @@ export const adminSaveTask = createServerFn({ method: "POST" })
         active: boolean;
         sort_order: number;
         require_proof?: boolean;
+        source?: string;
+        sponsor_chat_id?: string;
+        max_completions?: number | null;
+        repeat_interval_seconds?: number;
       };
     }) =>
       z
@@ -438,7 +462,7 @@ export const adminSaveTask = createServerFn({ method: "POST" })
           task: z.object({
             id: z.string().uuid().optional(),
             title: z.string().trim().min(1).max(120),
-            description: z.string().max(500).optional(),
+            description: z.string().max(2000).optional(),
             icon: z.string().max(10).optional(),
             url: z
               .string()
@@ -454,6 +478,10 @@ export const adminSaveTask = createServerFn({ method: "POST" })
             active: z.boolean(),
             sort_order: z.number().int(),
             require_proof: z.boolean().optional(),
+            source: z.enum(["admin", "sponsor"]).optional(),
+            sponsor_chat_id: z.string().max(32).optional(),
+            max_completions: z.number().int().positive().max(1_000_000).nullable().optional(),
+            repeat_interval_seconds: z.number().int().min(0).max(60 * 60 * 24 * 365).optional(),
           }),
         })
         .parse(d),
@@ -462,14 +490,15 @@ export const adminSaveTask = createServerFn({ method: "POST" })
     await verifyAdmin(data.password);
     const payload = data.task;
     if (payload.id) {
-      const { error } = await supabaseAdmin.from("tasks").update(payload).eq("id", payload.id);
+      const { error } = await supabaseAdmin.from("tasks").update(payload as never).eq("id", payload.id);
       if (error) throw new Error(error.message);
     } else {
-      const { error } = await supabaseAdmin.from("tasks").insert(payload);
+      const { error } = await supabaseAdmin.from("tasks").insert(payload as never);
       if (error) throw new Error(error.message);
     }
     return { ok: true };
   });
+
 
 export const adminDeleteTask = createServerFn({ method: "POST" })
   .inputValidator((d: { password: string; id: string }) =>
@@ -687,7 +716,7 @@ export const adminReviewTask = createServerFn({ method: "POST" })
     await verifyAdmin(data.password);
     const { data: row, error } = await supabaseAdmin
       .from("task_completions")
-      .select("id,chat_id,task_id,status")
+      .select("id,chat_id,task_id,status,proof_url")
       .eq("id", data.id)
       .single();
     if (error || !row) throw new Error("Submission not found");
@@ -726,8 +755,65 @@ export const adminReviewTask = createServerFn({ method: "POST" })
         status: newStatus,
         reviewed_at: new Date().toISOString(),
         reviewer_note: data.note ?? null,
+        proof_url: null,
       })
       .eq("id", data.id);
 
+    // Delete proof file from storage after review (privacy / storage hygiene)
+    if (row.proof_url) {
+      try {
+        await supabaseAdmin.storage.from("task-proofs").remove([row.proof_url]);
+      } catch (e) {
+        console.error("proof cleanup failed", e);
+      }
+    }
+
     return { ok: true };
   });
+
+// -------- Sponsor task moderation --------
+
+export const adminListSponsorRequests = createServerFn({ method: "POST" })
+  .inputValidator((d: { password: string }) =>
+    z.object({ password: z.string().min(1).max(100) }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    await verifyAdmin(data.password);
+    const { data: rows, error } = await (supabaseAdmin as never as {
+      from: (t: string) => { select: (s: string) => { order: (c: string, o: { ascending: boolean }) => { limit: (n: number) => Promise<{ data: unknown[] | null; error: { message: string } | null }> } } };
+    })
+      .from("sponsor_task_requests")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) throw new Error(error.message);
+    return (rows ?? []) as Array<{
+      id: string; chat_id: string; title: string; description: string | null;
+      icon: string | null; url: string | null; task_type: string;
+      reward_points: number; total_slots: number; total_cost: number;
+      status: string; reviewer_note: string | null; created_at: string;
+      reviewed_at: string | null;
+    }>;
+  });
+
+export const adminReviewSponsor = createServerFn({ method: "POST" })
+  .inputValidator((d: { password: string; id: string; action: "approve" | "reject"; note?: string }) =>
+    z.object({
+      password: z.string().min(1).max(100),
+      id: z.string().uuid(),
+      action: z.enum(["approve", "reject"]),
+      note: z.string().max(500).optional(),
+    }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    await verifyAdmin(data.password);
+    if (data.action === "approve") {
+      const { error } = await supabaseAdmin.rpc("admin_approve_sponsor_task" as never, { p_id: data.id } as never);
+      if (error) throw new Error(error.message);
+    } else {
+      const { error } = await supabaseAdmin.rpc("admin_reject_sponsor_task" as never, { p_id: data.id, p_note: data.note ?? null } as never);
+      if (error) throw new Error(error.message);
+    }
+    return { ok: true };
+  });
+

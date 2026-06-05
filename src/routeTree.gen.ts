@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WithdrawRouteImport } from './routes/withdraw'
 import { Route as TasksRouteImport } from './routes/tasks'
+import { Route as SponsorRouteImport } from './routes/sponsor'
 import { Route as HistoryRouteImport } from './routes/history'
 import { Route as EarnRouteImport } from './routes/earn'
 import { Route as AdminRouteImport } from './routes/admin'
@@ -25,6 +26,11 @@ const WithdrawRoute = WithdrawRouteImport.update({
 const TasksRoute = TasksRouteImport.update({
   id: '/tasks',
   path: '/tasks',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SponsorRoute = SponsorRouteImport.update({
+  id: '/sponsor',
+  path: '/sponsor',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HistoryRoute = HistoryRouteImport.update({
@@ -58,6 +64,7 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AdminRouteWithChildren
   '/earn': typeof EarnRoute
   '/history': typeof HistoryRoute
+  '/sponsor': typeof SponsorRoute
   '/tasks': typeof TasksRoute
   '/withdraw': typeof WithdrawRoute
   '/admin/dashboard': typeof AdminDashboardRoute
@@ -67,6 +74,7 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminRouteWithChildren
   '/earn': typeof EarnRoute
   '/history': typeof HistoryRoute
+  '/sponsor': typeof SponsorRoute
   '/tasks': typeof TasksRoute
   '/withdraw': typeof WithdrawRoute
   '/admin/dashboard': typeof AdminDashboardRoute
@@ -77,6 +85,7 @@ export interface FileRoutesById {
   '/admin': typeof AdminRouteWithChildren
   '/earn': typeof EarnRoute
   '/history': typeof HistoryRoute
+  '/sponsor': typeof SponsorRoute
   '/tasks': typeof TasksRoute
   '/withdraw': typeof WithdrawRoute
   '/admin/dashboard': typeof AdminDashboardRoute
@@ -88,6 +97,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/earn'
     | '/history'
+    | '/sponsor'
     | '/tasks'
     | '/withdraw'
     | '/admin/dashboard'
@@ -97,6 +107,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/earn'
     | '/history'
+    | '/sponsor'
     | '/tasks'
     | '/withdraw'
     | '/admin/dashboard'
@@ -106,6 +117,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/earn'
     | '/history'
+    | '/sponsor'
     | '/tasks'
     | '/withdraw'
     | '/admin/dashboard'
@@ -116,6 +128,7 @@ export interface RootRouteChildren {
   AdminRoute: typeof AdminRouteWithChildren
   EarnRoute: typeof EarnRoute
   HistoryRoute: typeof HistoryRoute
+  SponsorRoute: typeof SponsorRoute
   TasksRoute: typeof TasksRoute
   WithdrawRoute: typeof WithdrawRoute
 }
@@ -134,6 +147,13 @@ declare module '@tanstack/react-router' {
       path: '/tasks'
       fullPath: '/tasks'
       preLoaderRoute: typeof TasksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sponsor': {
+      id: '/sponsor'
+      path: '/sponsor'
+      fullPath: '/sponsor'
+      preLoaderRoute: typeof SponsorRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/history': {
@@ -189,19 +209,10 @@ const rootRouteChildren: RootRouteChildren = {
   AdminRoute: AdminRouteWithChildren,
   EarnRoute: EarnRoute,
   HistoryRoute: HistoryRoute,
+  SponsorRoute: SponsorRoute,
   TasksRoute: TasksRoute,
   WithdrawRoute: WithdrawRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
