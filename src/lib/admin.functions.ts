@@ -322,17 +322,37 @@ export const adminProcessWithdraw = createServerFn({ method: "POST" })
           .update({ points: Number(user.points) + Number(req.amount) })
           .eq("chat_id", req.chat_id);
       }
-    } else if (data.action === "approve" && redeemKey) {
-      // Call external redeem API
-      try {
-        const url = `https://sohel.pp.ua/main/bot/fackss/redeem_api.php?key=${encodeURIComponent(redeemKey)}&redeem=${encodeURIComponent(String(req.amount))}`;
-        const r = await fetch(url);
-        const text = (await r.text()).trim();
-        // try to extract a plausible code (alphanumeric chunk) — fall back to whole text
-        const m = text.match(/[A-Za-z0-9_-]{6,}/);
-        redeemCode = (m ? m[0] : text).slice(0, 80);
-      } catch (e) {
-        console.error("redeem api failed", e);
+    } else if (data.action === "approve") {
+      // Bot Points integration: credit user's bot account directly via redeem API.
+      if (req.method_name === "Bot Points") {
+        const botKey = process.env.BOT_REDEEM_KEY || sMap.bot_redeem_key;
+        if (!botKey) {
+          throw new Error("BOT_REDEEM_KEY not configured");
+        }
+        // account holds the bot user id (digits)
+        if (!/^\d{3,20}$/.test(String(req.account).trim())) {
+          throw new Error("Invalid bot user_id format");
+        }
+        try {
+          const url = `https://sohel.pp.ua/main/bot/fackss/redeem_api.php?key=${encodeURIComponent(botKey)}&action=add_points&user_id=${encodeURIComponent(String(req.account).trim())}&points=${encodeURIComponent(String(req.amount))}`;
+          const r = await fetch(url);
+          const text = (await r.text()).trim();
+          if (!r.ok) throw new Error(`Bot API ${r.status}: ${text.slice(0, 120)}`);
+          redeemCode = `BOT:${text.slice(0, 60)}`;
+        } catch (e) {
+          throw new Error(`Bot redeem failed: ${e instanceof Error ? e.message : "unknown"}`);
+        }
+      } else if (redeemKey) {
+        // Generic redeem-code generator for other methods
+        try {
+          const url = `https://sohel.pp.ua/main/bot/fackss/redeem_api.php?key=${encodeURIComponent(redeemKey)}&redeem=${encodeURIComponent(String(req.amount))}`;
+          const r = await fetch(url);
+          const text = (await r.text()).trim();
+          const m = text.match(/[A-Za-z0-9_-]{6,}/);
+          redeemCode = (m ? m[0] : text).slice(0, 80);
+        } catch (e) {
+          console.error("redeem api failed", e);
+        }
       }
     }
 
