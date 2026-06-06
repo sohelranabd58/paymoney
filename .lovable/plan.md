@@ -1,91 +1,103 @@
-# Plan
 
-Big multi-feature update. Grouped into 9 areas. Approve and I'll ship migrations + code in one pass.
+# Fix-all pass: crash, security, bot-redeem, withdraw UX, history, ads, tasks
 
-## 1. User-created (sponsor) tasks — points spent to advertise
+## 0. Critical crash — "require is not defined"
 
-Users can spend their points to publish a task. Admin reviews and approves.
+`src/routes/__root.tsx` currently loads `HighPerfBanner` via `require(...)` which breaks in the browser → blank screen with `Try again` / `Go home`. Replace with a normal ESM import and gate by route (hide on `/admin/*`). This unblocks everything else.
 
-- New table `sponsor_task_requests`: `chat_id`, `title`, `description`, `icon`, `url`, `task_type`, `reward_points` (per user), `total_slots` (how many users complete before "done"), `completed_slots`, `total_cost` (points debited from sponsor = reward × slots, locked at submit), `status` (pending/approved/rejected/done), `reviewer_note`.
-- Admin settings: `sponsor_tasks_enabled` (on/off), `sponsor_min_reward`, `sponsor_min_slots`, `sponsor_min_total_cost`.
-- User flow (new page `/sponsor`): form with title, description, link, per-task reward, total slots. Live "total cost = reward × slots" preview. On submit: atomic SQL `submit_sponsor_task_atomic` debits points → inserts pending row.
-- Admin reviews in dashboard → Approve creates a real row in `tasks` with `source='sponsor'`, `sponsor_chat_id`, `max_completions=total_slots`. Reject refunds points.
-- `tasks` gets `source` ('admin' | 'sponsor'), `sponsor_chat_id`, `max_completions`, `completions_count`. Task auto-deactivates when `completions_count >= max_completions`.
-- Tasks list shows badge: "Sponsor" or "Admin", matching whatever was selected.
+## 1. Bot-point redeem — auto chat_id + working pay-out
 
-## 2. Bot-point withdrawal method
+Problem: admin currently has to type the bot user_id; approval doesn't actually credit the user.
 
-- Seed a `withdraw_methods` row "Bot Points" with icon 🤖.
-- When admin processes a withdraw whose `method_name='Bot Points'`, server calls:
-  `https://sohel.pp.ua/main/bot/fackss/redeem_api.php?key=<BOT_REDEEM_KEY>&action=add_points&user_id=<account>&points=<amount>`
-  on Approve. Key stored in secrets (`BOT_REDEEM_KEY`), not hardcoded. Auto-mark completed on 200 OK; show error + leave pending on failure.
+- Bot Points withdraw form (user side): when method = "Bot Points", hide the "Account / wallet" input and auto-submit `account = chatId`. Server `submitWithdraw` re-validates this on bot-points method.
+- `adminProcessWithdraw` (approve path):
+  1. Read old balance: `GET …/redeem_api.php?key=$BOT_REDEEM_KEY&action=check&user_id=<account>` → `old_points`.
+  2. Credit: `GET …action=add_points&user_id=<account>&points=<amount>`.
+  3. Re-check: same `check` call → `new_points`.
+  4. Only mark `completed` when add returns success AND `new_points >= old_points + amount` (tolerant of pre-existing pending). Otherwise leave `pending` and surface error in admin UI.
+- Persist `old_points`, `new_points`, and bot raw response on the withdraw row (new columns: `bot_old_points bigint`, `bot_new_points bigint`, `bot_response jsonb`).
 
-## 3. Time-based / repeatable tasks
+## 2. User Telegram notifications (advanced Bangla)
 
-- `tasks` adds `repeat_interval_seconds int default 0` (0 = one-time). When > 0, the user can complete the same task again after the interval.
-- Listing logic uses most-recent completion timestamp; "Locked for Xh Ym" badge until cooldown elapses. Sponsor tasks remain one-time-per-user.
+Send via existing bot token (already configured for the app — confirm `TELEGRAM_BOT_TOKEN` exists; if missing, ask user to add). Two events:
 
-## 4. Task page UX — full-screen step-by-step dialog
+- **On submit** (any method): "আপনার উইথড্র অনুরোধ গ্রহণ করা হয়েছে …" with amount, method, account, current balance (for Bot Points: old balance fetched from API).
+- **On approve**: "✅ আপনার উইথড্র সফলভাবে সম্পন্ন হয়েছে …" with amount, method; for Bot Points include `পূর্ববর্তী পয়েন্ট: X` and `বর্তমান পয়েন্ট: Y` from the API.
+- **On reject**: short Bangla message + reason.
 
-- Replace inline description with a full-screen `Dialog` opened on card tap.
-- Shows: icon, title, description (admin/sponsor markdown-ish line breaks preserved, rendered as ordered steps), reward.
-- Bottom: single primary button `Start` → opens link in new tab AND marks task as opened (`localStorage`). After return, the dialog updates to show `Verify & claim` (and screenshot uploader when `require_proof`).
+Bangla strings centralized in `src/lib/notify.server.ts`. All calls fire from server fns; failures are logged but don't break the admin action.
 
-## 5. Click-to-get-reward (bonus click ad) controls
+## 3. Per-method minimum withdraw (drop global)
 
-Already partially exists; add full admin control + correctness:
-- New settings: `click_ad_enabled` (master on/off — when off, never show popup and rewards always go to balance), `click_ad_min_view_seconds` (default 15).
-- Popup only shows when `click_ad_enabled` AND `bonus_points > 0` AND `pending_points > 0` (so 0 amount = silent).
-- Track `click_ad_opened_at` server-side via new fn `startClickAd`; `claimClickAd` rejects if `now() - opened_at < click_ad_min_view_seconds` ("Watch the ad for X more seconds").
-- Admin Ads section gets: master toggle, min seconds input.
+- Hide / ignore `min_withdraw` in `app_settings`. Admin settings UI removes the field.
+- Withdraw page + server validation use **only** `withdraw_methods.min_amount`.
+- Method editor in admin already has min_amount — keep, label as "Minimum (this method)".
 
-## 6. Manual task proof — delete after review
+## 4. Auto-load next short ad after 16s (optional toggle)
 
-- Update `adminReviewTask`: after Approve/Reject is saved, remove the file from storage (`task-proofs`) and null out `proof_url`. Pending list keeps showing thumbnail until decision.
+- New settings: `auto_next_ad_enabled` (default false) and `auto_next_ad_delay_seconds` (default 16).
+- In `earn.tsx`: when enabled, after a successful short-ad claim, start a countdown; when it hits 0 and cooldown is clear, automatically trigger the next short-ad watch. A visible "Auto-play next ad" switch lets the user override per session (stored in `localStorage`).
+- Admin Ads card surfaces the toggle + delay input.
 
-## 7. Scrolling marquee on Tasks page
+## 5. Advanced history page (separate tabs, last 30 days)
 
-- `app_settings.marquee_tasks_text` (separate from existing earn marquee). Tasks header renders `<Marquee text={...} />` reusing the existing component.
+`src/routes/history.tsx`:
+- Tabs: **Ads**, **Tasks**, **Withdraws**, **Sponsor**.
+- Each tab lists last 30 days (server fn filters by `created_at >= now() - interval '30 days'`), grouped by day, with totals at top.
+- Withdraws tab shows status badge + bot old/new points when present.
+- New server fns: `listAdHistory`, `listTaskHistory`, `listWithdrawHistory`, `listSponsorHistory` (all paginated, 30-day window).
 
-## 8. Responsive 468×60 banner ad on every page
+## 6. Tasks — admin time interval in days
 
-- New `<HighPerfBanner />` component injecting the provided `atOptions` + invoke.js into an isolated `<iframe srcDoc>` so the third-party script is sandboxed. Wrapper: `w-full max-w-[468px] mx-auto aspect-[468/60]` so it scales down responsively on narrow phones without overflow.
-- Mounted in `__root.tsx` below `<Outlet />` so it appears on every page (home, earn, tasks, withdraw, history, sponsor). Hidden on `/admin/*` routes.
+- Tasks editor: replace seconds input with a "Repeat every" control (number + unit select: Off / Hours / Days). Stored as `repeat_interval_seconds`.
+- Quick presets: 1 / 2 / 3 / 7 days.
+- Cooldown badge on Tasks page already exists; format upgrade to show `Xd Yh` when ≥ 1 day.
 
-## 9. Admin panel UI polish + security pass
+## 7. Responsive banner ad — finish wiring
 
-- Sidebar → grouped collapsible nav (Overview · Users · Tasks · Sponsor Reviews · Task Reviews · Withdrawals · Methods · Ads · Levels · Settings) with icons, active highlight, sticky header showing current section + logout.
-- Stat cards on Overview: pending sponsor count, pending task reviews count, pending withdrawals, today's earnings.
-- Tasks editor: add Source selector (Admin / Sponsor display-only flag), Reward, Max completions, Repeat interval, Require proof toggle.
-- Settings page surfaces: sponsor toggle + minimums, click-ad master toggle + min seconds, marquee texts (earn + tasks).
-- Security sweep:
-  - Confirm every admin server fn calls `assertAdmin(password)` before any write.
-  - Add Zod validation (length / regex / range) to every new input (sponsor submit, settings, withdraw account).
-  - `submit_sponsor_task_atomic` runs `SELECT … FOR UPDATE` on `app_users` to prevent double-spend.
-  - Bot-redeem API key only read from `process.env.BOT_REDEEM_KEY` inside `.handler()`; never bundled to client.
-  - Storage policies: `task-proofs` stays private; admin signed URLs only.
-  - Re-run `supabase--linter` and patch findings introduced by new tables (GRANTs + RLS).
+- Crash from §0 was the only blocker; after ESM import, the existing `HighPerfBanner` renders on every non-admin page.
+- Make sure it's also injected at the bottom of the Earn, Tasks, History, Withdraw, Sponsor routes (already covered by mounting in `__root.tsx`).
 
-## Technical / files
+## 8. Finish previously-promised wiring
 
-**Migrations (single file):**
-- `tasks`: + `source text default 'admin'`, `sponsor_chat_id text`, `max_completions int`, `completions_count int default 0`, `repeat_interval_seconds int default 0`.
-- New `sponsor_task_requests` table + GRANTs + RLS (admin-only via server fn).
-- New `app_settings` rows: `sponsor_tasks_enabled`, `sponsor_min_reward`, `sponsor_min_slots`, `click_ad_enabled`, `click_ad_min_view_seconds`, `marquee_tasks_text`.
-- `app_users`: + `click_ad_opened_at timestamptz`.
-- SQL fns: `submit_sponsor_task_atomic`, `admin_approve_sponsor_task`, `admin_reject_sponsor_task` (refund), update `claim_click_ad_atomic` to check min seconds, trigger on `task_completions` insert to bump `tasks.completions_count` and auto-set `active=false` when full.
-- Seed `withdraw_methods` "Bot Points".
+- `src/routes/tasks.tsx` → use `TaskDetailDialog`, render `marquee_tasks_text`, show source/sponsor badge and repeat cooldown.
+- `src/routes/admin.dashboard.tsx` → Sponsor Reviews section, settings for sponsor/click-ad/marquee/auto-next-ad, removal of global min withdraw.
+- `earn.tsx` → call `markClickAdOpened` when the bonus popup opens so the min-seconds gate works.
 
-**Code:**
-- `src/components/HighPerfBanner.tsx` (new), mount in `src/routes/__root.tsx`.
-- `src/components/TaskDetailDialog.tsx` (new full-screen task dialog).
-- `src/routes/sponsor.tsx` (new), nav entry in `BottomNav`.
-- `src/routes/tasks.tsx`: dialog wiring, marquee, source badge, repeat cooldown.
-- `src/routes/admin.dashboard.tsx`: nav refactor, Sponsor Reviews tab, Settings additions, Tasks editor extensions.
-- `src/lib/app.functions.ts`: `submitSponsorTask`, `startClickAd`, updated `claimClickAd`.
-- `src/lib/admin.functions.ts`: sponsor list/approve/reject, settings save, bot-redeem call on approve, proof file deletion after review.
-- Secret: `BOT_REDEEM_KEY` (I'll prompt you to set it).
+## 9. Security pass
 
-## Out of scope (flag if you want them)
-- Email/Telegram notification to sponsor on approval/rejection.
-- Sponsor analytics (impressions, click-through).
+- `adminProcessWithdraw`, `adminReviewTask`, `adminReviewSponsor`, all admin fns: assert admin via existing `assertAdmin(password)` first.
+- Zod validation on all new inputs (history filters, settings, withdraw account, bot-redeem user_id regex `^\d{5,15}$`).
+- `BOT_REDEEM_KEY` read only inside `.handler()` from `process.env`. Never bundled.
+- `TELEGRAM_BOT_TOKEN` likewise.
+- Storage: `task-proofs` stays private; admin signed URLs only.
+- Re-run `supabase--linter` after migration; patch findings.
+
+## Migrations (single file)
+
+- `withdraw_requests`: + `bot_old_points bigint`, `bot_new_points bigint`, `bot_response jsonb`.
+- `app_settings` seed: `auto_next_ad_enabled=false`, `auto_next_ad_delay_seconds=16`. Mark `min_withdraw` as unused (kept for back-compat, not read).
+- No schema change needed for per-method min (already exists).
+
+## Secrets needed
+
+- `BOT_REDEEM_KEY` — already requested previously; confirm set.
+- `TELEGRAM_BOT_TOKEN` — required for user notifications. If not yet set, I'll prompt before shipping the notify step (the rest still ships).
+
+## Files touched
+
+- `src/routes/__root.tsx` (ESM banner import — fixes crash)
+- `src/routes/withdraw.tsx` (bot-points auto chat_id, per-method min)
+- `src/routes/earn.tsx` (auto-next ad, markClickAdOpened)
+- `src/routes/tasks.tsx` (dialog, marquee, badges, cooldown formatting)
+- `src/routes/history.tsx` (tabs, 30-day separation)
+- `src/routes/admin.dashboard.tsx` (settings, sponsor reviews, day-interval input)
+- `src/lib/app.functions.ts` (history fns, submit validation, auto-ad helpers)
+- `src/lib/admin.functions.ts` (bot pay-out flow, notifications, settings)
+- `src/lib/notify.server.ts` (new — Bangla Telegram messages)
+- One Supabase migration (columns + seeds)
+
+## Out of scope (ask if you want)
+
+- In-app realtime notification panel (we only do Telegram messages).
+- Re-implementing global min withdraw as a hard cap.

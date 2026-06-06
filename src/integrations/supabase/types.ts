@@ -352,6 +352,9 @@ export type Database = {
         Row: {
           account: string
           amount: number
+          bot_new_points: number | null
+          bot_old_points: number | null
+          bot_response: string | null
           chat_id: string
           created_at: string
           id: string
@@ -365,6 +368,9 @@ export type Database = {
         Insert: {
           account: string
           amount: number
+          bot_new_points?: number | null
+          bot_old_points?: number | null
+          bot_response?: string | null
           chat_id: string
           created_at?: string
           id?: string
@@ -378,6 +384,9 @@ export type Database = {
         Update: {
           account?: string
           amount?: number
+          bot_new_points?: number | null
+          bot_old_points?: number | null
+          bot_response?: string | null
           chat_id?: string
           created_at?: string
           id?: string

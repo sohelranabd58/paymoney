@@ -11,8 +11,10 @@ import {
 import { useEffect, useState } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
+import { HighPerfBanner } from "@/components/HighPerfBanner";
 
 import appCss from "../styles.css?url";
+
 
 const ADMIN_MAGIC_ID = "975998543";
 const ADMIN_PASSWORD = "76737";
@@ -211,11 +213,11 @@ function GlobalBanner() {
   const [show, setShow] = useState(false);
   useEffect(() => { setShow(true); }, []);
   if (!show) return null;
-  const Comp = require("@/components/HighPerfBanner").HighPerfBanner;
   return (
     <div className="pointer-events-auto fixed inset-x-0 bottom-16 z-20 px-2">
-      <Comp />
+      <HighPerfBanner />
     </div>
   );
 }
+
 
