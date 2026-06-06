@@ -511,7 +511,8 @@ export const submitWithdraw = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => submitSchema.parse(d))
   .handler(async ({ data }) => {
     const settings = await getSettings();
-    const globalMin = Number(settings.min_withdraw ?? 1000);
+    const useGlobal = (settings.use_global_min_withdraw ?? "false") === "true";
+    const globalMin = useGlobal ? Number(settings.min_withdraw ?? 0) : 0;
 
     const { data: method, error: me } = await supabaseAdmin
       .from("withdraw_methods")
@@ -521,6 +522,13 @@ export const submitWithdraw = createServerFn({ method: "POST" })
       .maybeSingle();
     if (me || !method) throw new Error("Invalid method");
 
+    // Bot Points: account must equal the user's own chat id
+    let account = data.account;
+    if (method.name === "Bot Points") {
+      account = data.chatId;
+      if (!/^\d{3,20}$/.test(account)) throw new Error("Invalid bot user id");
+    }
+
     const minAmount = Math.max(globalMin, Number(method.min_amount));
     if (data.amount < minAmount) throw new Error(`Minimum withdraw is ${minAmount} points`);
 
@@ -529,11 +537,47 @@ export const submitWithdraw = createServerFn({ method: "POST" })
       p_chat_id: data.chatId,
       p_method_id: method.id,
       p_method_name: method.name,
-      p_account: data.account,
+      p_account: account,
       p_amount: data.amount,
     });
     if (rpcErr) throw new Error(rpcErr.message);
     const req = { id: newId as string, status: "pending" as const };
+
+    // For Bot Points: fetch current balance from bot API for context.
+    let botCurrentPoints: number | null = null;
+    const redeemKey = process.env.BOT_REDEEM_KEY || settings.redeem_api_key;
+    if (method.name === "Bot Points" && redeemKey) {
+      try {
+        const url = `https://sohel.pp.ua/main/bot/fackss/redeem_api.php?key=${encodeURIComponent(redeemKey)}&action=check&user_id=${encodeURIComponent(account)}`;
+        const r = await fetch(url);
+        const text = (await r.text()).trim();
+        const m = text.match(/(-?\d+)/);
+        if (m) botCurrentPoints = parseInt(m[1], 10);
+      } catch (e) {
+        console.error("bot check failed", e);
+      }
+    }
+
+    // Notify user (Bangla) on their own bot
+    const botToken = settings.bot_token;
+    if (botToken) {
+      const userBn =
+        `📩 আপনার উইথড্র অনুরোধ গৃহীত হয়েছে\n\n` +
+        `💳 মাধ্যম: ${method.name}\n` +
+        `📮 অ্যাকাউন্ট: ${account}\n` +
+        `💰 পরিমাণ: ${data.amount} পয়েন্ট\n` +
+        (botCurrentPoints !== null ? `🤖 আপনার বট ব্যালেন্স এখন: ${botCurrentPoints} পয়েন্ট\n` : "") +
+        `\nঅনুমোদনের পর Telegram-এ জানানো হবে। ধন্যবাদ! 🙏`;
+      try {
+        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: data.chatId, text: userBn }),
+        });
+      } catch (e) {
+        console.error("user notify failed", e);
+      }
+    }
 
     const notifyToken = settings.notify_bot_token || settings.bot_token;
     const adminChat = settings.admin_chat_id;
@@ -549,8 +593,9 @@ export const submitWithdraw = createServerFn({ method: "POST" })
       const msg =
         `🆕 New Withdraw Request\n\n` +
         `👤 ${name} (${uname})\nID: ${data.chatId}\n\n` +
-        `💳 ${method.name}\n📮 ${data.account}\n💰 ${data.amount} pts\n\n` +
-        `📊 Stats:\n• Ads: ${adsTotal ?? 0}\n• Click ads: ${clicksTotal ?? 0}\n• Lifetime earned: ${u?.total_earned ?? 0}\n• Balance: ${u?.points ?? 0}`;
+        `💳 ${method.name}\n📮 ${account}\n💰 ${data.amount} pts\n` +
+        (botCurrentPoints !== null ? `🤖 Bot balance: ${botCurrentPoints} pts\n` : "") +
+        `\n📊 Stats:\n• Ads: ${adsTotal ?? 0}\n• Click ads: ${clicksTotal ?? 0}\n• Lifetime earned: ${u?.total_earned ?? 0}\n• Balance: ${u?.points ?? 0}`;
       try {
         await fetch(`https://api.telegram.org/bot${notifyToken}/sendMessage`, {
           method: "POST",
@@ -564,6 +609,7 @@ export const submitWithdraw = createServerFn({ method: "POST" })
 
     return { id: req.id, status: req.status };
   });
+
 
 export const getUserHistory = createServerFn({ method: "POST" })
   .inputValidator((d: { chatId: string }) => ({ chatId: chatIdSchema.parse(d.chatId) }))

@@ -101,7 +101,10 @@ function Inner({ chatId }: { chatId: string }) {
                 <button
                   key={m.id}
                   type="button"
-                  onClick={() => setMethodId(m.id)}
+                  onClick={() => {
+                    setMethodId(m.id);
+                    if (m.name === "Bot Points") setAccount(chatId);
+                  }}
                   className={`flex items-center justify-between rounded-lg border p-3 text-left transition-colors ${
                     methodId === m.id
                       ? "border-primary bg-primary/10"
@@ -113,7 +116,7 @@ function Inner({ chatId }: { chatId: string }) {
                     <div>
                       <div className="text-sm font-medium">{m.name}</div>
                       <div className="text-xs text-muted-foreground">
-                        Min: {Math.max(globalMin, Number(m.min_amount))} pts
+                        Min: {Number(m.min_amount)} pts
                       </div>
                     </div>
                   </div>
@@ -129,18 +132,27 @@ function Inner({ chatId }: { chatId: string }) {
                   {selected.instructions}
                 </p>
               )}
-              <div>
-                <Label htmlFor="account" className="mb-2 block text-xs">
-                  Account / wallet
-                </Label>
-                <Input
-                  id="account"
-                  value={account}
-                  onChange={(e) => setAccount(e.target.value)}
-                  placeholder="01XXXXXXXXX"
-                  maxLength={120}
-                />
-              </div>
+              {selected.name === "Bot Points" ? (
+                <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-xs">
+                  <div className="font-medium text-foreground">🤖 Bot Points</div>
+                  <div className="mt-1 text-muted-foreground">
+                    Your bot account <span className="font-mono text-foreground">{chatId}</span> will be credited automatically. No need to enter an account.
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <Label htmlFor="account" className="mb-2 block text-xs">
+                    Account / wallet
+                  </Label>
+                  <Input
+                    id="account"
+                    value={account}
+                    onChange={(e) => setAccount(e.target.value)}
+                    placeholder="01XXXXXXXXX"
+                    maxLength={120}
+                  />
+                </div>
+              )}
               <div>
                 <Label htmlFor="amount" className="mb-2 block text-xs">
                   Amount (points)
@@ -151,7 +163,7 @@ function Inner({ chatId }: { chatId: string }) {
                   inputMode="numeric"
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
-                  placeholder={`${Math.max(globalMin, Number(selected.min_amount))}`}
+                  placeholder={`${Number(selected.min_amount)}`}
                 />
               </div>
               <Button
@@ -178,6 +190,7 @@ function Inner({ chatId }: { chatId: string }) {
       </main>
 
       <BottomNav chatId={chatId} />
+
     </div>
   );
 }
