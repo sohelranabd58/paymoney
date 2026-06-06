@@ -297,6 +297,9 @@ export const adminProcessWithdraw = createServerFn({ method: "POST" })
 
     const newStatus = data.action === "approve" ? "approved" : "rejected";
     let redeemCode: string | null = null;
+    let botOldPoints: number | null = null;
+    let botNewPoints: number | null = null;
+    let botResponse: string | null = null;
 
     // Load settings once
     const { data: settingsRows } = await supabaseAdmin
@@ -323,24 +326,46 @@ export const adminProcessWithdraw = createServerFn({ method: "POST" })
           .eq("chat_id", req.chat_id);
       }
     } else if (data.action === "approve") {
-      // Bot Points integration: credit user's bot account directly via redeem API.
+      // Bot Points integration: credit user's bot account via redeem API and capture before/after.
       if (req.method_name === "Bot Points") {
-        const botKey = process.env.BOT_REDEEM_KEY || sMap.bot_redeem_key;
+        const botKey = process.env.BOT_REDEEM_KEY || sMap.bot_redeem_key || redeemKey;
         if (!botKey) {
           throw new Error("BOT_REDEEM_KEY not configured");
         }
-        // account holds the bot user id (digits)
-        if (!/^\d{3,20}$/.test(String(req.account).trim())) {
+        const account = String(req.account).trim();
+        if (!/^\d{3,20}$/.test(account)) {
           throw new Error("Invalid bot user_id format");
         }
+        const base = `https://sohel.pp.ua/main/bot/fackss/redeem_api.php?key=${encodeURIComponent(botKey)}`;
+        const parsePoints = (txt: string): number | null => {
+          const m = txt.match(/(-?\d+)/);
+          return m ? parseInt(m[1], 10) : null;
+        };
+        // 1) Check old balance
         try {
-          const url = `https://sohel.pp.ua/main/bot/fackss/redeem_api.php?key=${encodeURIComponent(botKey)}&action=add_points&user_id=${encodeURIComponent(String(req.account).trim())}&points=${encodeURIComponent(String(req.amount))}`;
-          const r = await fetch(url);
+          const r0 = await fetch(`${base}&action=check&user_id=${encodeURIComponent(account)}`);
+          const t0 = (await r0.text()).trim();
+          botOldPoints = parsePoints(t0);
+        } catch (e) {
+          console.error("bot check (before) failed", e);
+        }
+        // 2) Add points
+        try {
+          const r = await fetch(`${base}&action=add_points&user_id=${encodeURIComponent(account)}&points=${encodeURIComponent(String(req.amount))}`);
           const text = (await r.text()).trim();
+          botResponse = text.slice(0, 500);
           if (!r.ok) throw new Error(`Bot API ${r.status}: ${text.slice(0, 120)}`);
           redeemCode = `BOT:${text.slice(0, 60)}`;
         } catch (e) {
           throw new Error(`Bot redeem failed: ${e instanceof Error ? e.message : "unknown"}`);
+        }
+        // 3) Re-check new balance
+        try {
+          const r2 = await fetch(`${base}&action=check&user_id=${encodeURIComponent(account)}`);
+          const t2 = (await r2.text()).trim();
+          botNewPoints = parsePoints(t2);
+        } catch (e) {
+          console.error("bot check (after) failed", e);
         }
       } else if (redeemKey) {
         // Generic redeem-code generator for other methods
@@ -363,15 +388,40 @@ export const adminProcessWithdraw = createServerFn({ method: "POST" })
         note: data.note ?? null,
         processed_at: new Date().toISOString(),
         redeem_code: redeemCode,
+        bot_old_points: botOldPoints,
+        bot_new_points: botNewPoints,
+        bot_response: botResponse,
       })
       .eq("id", data.id);
 
-    // Notify user (main bot)
+    // Notify user (Bangla)
     if (botToken) {
-      const userMsg =
-        data.action === "approve"
-          ? `✅ Withdraw APPROVED\n\n${req.amount} pts via ${req.method_name}\n\n🎁 Redeem code:\n\`${redeemCode ?? "(not generated)"}\`\n\nUse it any time — also saved in your history.${data.note ? `\n\nNote: ${data.note}` : ""}`
-          : `❌ Withdraw REJECTED\n\n${req.amount} pts via ${req.method_name}\nPoints have been refunded.${data.note ? `\n\nReason: ${data.note}` : ""}`;
+      let userMsg: string;
+      if (data.action === "approve") {
+        if (req.method_name === "Bot Points") {
+          userMsg =
+            `✅ আপনার উইথড্র সফলভাবে সম্পন্ন হয়েছে!\n\n` +
+            `💳 মাধ্যম: ${req.method_name}\n` +
+            `💰 পরিমাণ: ${req.amount} পয়েন্ট\n\n` +
+            (botOldPoints !== null ? `🔸 পূর্ববর্তী ব্যালেন্স: ${botOldPoints} পয়েন্ট\n` : "") +
+            (botNewPoints !== null ? `🔹 বর্তমান ব্যালেন্স: ${botNewPoints} পয়েন্ট\n` : "") +
+            (data.note ? `\n📝 নোট: ${data.note}` : "") +
+            `\n\nধন্যবাদ! 🎉`;
+        } else {
+          userMsg =
+            `✅ আপনার উইথড্র অনুমোদিত হয়েছে!\n\n` +
+            `💳 মাধ্যম: ${req.method_name}\n` +
+            `💰 পরিমাণ: ${req.amount} পয়েন্ট\n` +
+            (redeemCode ? `\n🎁 রিডিম কোড:\n\`${redeemCode}\`\n` : "") +
+            (data.note ? `\n📝 নোট: ${data.note}` : "");
+        }
+      } else {
+        userMsg =
+          `❌ আপনার উইথড্র অনুরোধ প্রত্যাখ্যান করা হয়েছে।\n\n` +
+          `💳 মাধ্যম: ${req.method_name}\n` +
+          `💰 পরিমাণ: ${req.amount} পয়েন্ট (ফেরত দেওয়া হয়েছে)\n` +
+          (data.note ? `\n📝 কারণ: ${data.note}` : "");
+      }
       try {
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: "POST",
@@ -387,7 +437,10 @@ export const adminProcessWithdraw = createServerFn({ method: "POST" })
     if (notifyToken && adminChat) {
       const adminMsg =
         data.action === "approve"
-          ? `✅ Approved request\nUser: ${req.chat_id}\nAmount: ${req.amount} pts\nMethod: ${req.method_name}\nCode: ${redeemCode ?? "(failed)"}`
+          ? `✅ Approved request\nUser: ${req.chat_id}\nAmount: ${req.amount} pts\nMethod: ${req.method_name}\n` +
+            (req.method_name === "Bot Points"
+              ? `Bot before: ${botOldPoints ?? "?"}\nBot after: ${botNewPoints ?? "?"}\n`
+              : `Code: ${redeemCode ?? "(failed)"}\n`)
           : `❌ Rejected request\nUser: ${req.chat_id}\nAmount: ${req.amount} pts\nReason: ${data.note ?? "—"}`;
       try {
         await fetch(`https://api.telegram.org/bot${notifyToken}/sendMessage`, {
@@ -400,8 +453,14 @@ export const adminProcessWithdraw = createServerFn({ method: "POST" })
       }
     }
 
-    return { ok: true, redeem_code: redeemCode };
+    return {
+      ok: true,
+      redeem_code: redeemCode,
+      bot_old_points: botOldPoints,
+      bot_new_points: botNewPoints,
+    };
   });
+
 
 export const adminUpdateUser = createServerFn({ method: "POST" })
   .inputValidator(
