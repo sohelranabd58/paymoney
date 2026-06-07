@@ -133,16 +133,28 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
     }
   }, [clickOpen, chatId, markOpened]);
 
-  // Auto-next countdown -> triggers next short ad
+  // Auto-next countdown -> triggers next short ad when it reaches 0
+  const autoArmedRef = useState({ armed: false })[0];
   useEffect(() => {
-    if (autoLeft <= 0) return;
+    if (autoLeft <= 0) {
+      if (autoArmedRef.armed && autoNext && data) {
+        autoArmedRef.armed = false;
+        const zi = data.settings.zones.interstitial;
+        const limitReached = zi.today >= zi.limit;
+        const cooldownLeftMs = data.user.last_ad_at
+          ? new Date(data.user.last_ad_at).getTime() + zi.cooldown * 1000 - Date.now()
+          : 0;
+        if (!limitReached && cooldownLeftMs <= 0 && !data.user.banned && !data.user.flagged) {
+          watchAd("interstitial", zi.sdk_id, false);
+        }
+      }
+      return;
+    }
+    autoArmedRef.armed = true;
     const id = setInterval(() => setAutoLeft((s) => Math.max(0, s - 1)), 1000);
     return () => clearInterval(id);
-  }, [autoLeft]);
-  useEffect(() => {
-    if (!autoNext || autoLeft !== 0 || !data) return;
-    // Only auto-trigger when previous countdown completes (autoLeft hits 0 from >0)
-  }, [autoLeft, autoNext, data]);
+  }, [autoLeft, autoNext, data, watchAd, autoArmedRef]);
+
 
   const playClickAd = useCallback(async () => {
     if (!data) return;
