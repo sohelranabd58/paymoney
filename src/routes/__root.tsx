@@ -199,11 +199,12 @@ function RootComponent() {
         <AdminInvalidScreen />
       ) : (
         <>
-          <Outlet />
           {!hideBanner && <GlobalBanner />}
+          <Outlet />
         </>
       )}
       <Toaster position="top-center" />
+
     </QueryClientProvider>
   );
 }
