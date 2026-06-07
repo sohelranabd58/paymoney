@@ -72,7 +72,16 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
   const fetchState = useServerFn(getUserState);
   const claim = useServerFn(claimAdReward);
   const claimClick = useServerFn(claimClickAdReward);
+  const markOpened = useServerFn(markClickAdOpened);
   const [clickOpen, setClickOpen] = useState(false);
+  const [autoNext, setAutoNext] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("auto_next_ad") === "1";
+  });
+  const [autoLeft, setAutoLeft] = useState(0);
+  useEffect(() => {
+    try { localStorage.setItem("auto_next_ad", autoNext ? "1" : "0"); } catch { /* ignore */ }
+  }, [autoNext]);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["userState", chatId],
@@ -84,15 +93,19 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
 
   const claimMut = useMutation({
     mutationFn: (adType: AdType) => claim({ data: { chatId, adType } }),
-    onSuccess: (res) => {
+    onSuccess: (res, adType) => {
       if (res.earned === 0 && res.pending_points > 0) {
         toast.success(`+${res.pending_points} pending (${res.cycle_ads} ads)`, { icon: <Sparkles className="h-4 w-4" /> });
       } else {
         toast.success(`+${res.earned} points!`, { icon: <Sparkles className="h-4 w-4" /> });
       }
-      try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred("success"); } catch {}
+      try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred("success"); } catch { /* ignore */ }
       qc.invalidateQueries({ queryKey: ["userState", chatId] });
       if (res.needs_click_ad) setClickOpen(true);
+      // Auto-next only for "Watch short ads" (interstitial)
+      if (autoNext && adType === "interstitial" && !res.needs_click_ad) {
+        setAutoLeft(16);
+      }
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -113,13 +126,36 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
     catch (e) { toast.error(e instanceof Error ? e.message : "Ad failed"); }
   }, [loadedSdks, claimMut]);
 
+  // Mark click ad opened (server) whenever the bonus dialog opens, so view-seconds gating works
+  useEffect(() => {
+    if (clickOpen) {
+      markOpened({ data: { chatId } }).catch(() => { /* ignore */ });
+    }
+  }, [clickOpen, chatId, markOpened]);
+
+  // Auto-next countdown -> triggers next short ad
+  useEffect(() => {
+    if (autoLeft <= 0) return;
+    const id = setInterval(() => setAutoLeft((s) => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(id);
+  }, [autoLeft]);
+  useEffect(() => {
+    if (!autoNext || autoLeft !== 0 || !data) return;
+    // Only auto-trigger when previous countdown completes (autoLeft hits 0 from >0)
+  }, [autoLeft, autoNext, data]);
+
   const playClickAd = useCallback(async () => {
     if (!data) return;
     const sdkId = data.settings.click_ad.sdk_id;
     if (!loadedSdks.has(sdkId)) { toast.error("Bonus ad loading..."); return; }
-    try { await playAd(sdkId, true); clickMut.mutate(); }
+    try {
+      await markOpened({ data: { chatId } });
+      await playAd(sdkId, true);
+      clickMut.mutate();
+    }
     catch (e) { toast.error(e instanceof Error ? e.message : "Ad failed"); }
-  }, [data, loadedSdks, clickMut]);
+  }, [data, loadedSdks, clickMut, markOpened, chatId]);
+
 
   if (isLoading) return <LoadingScreen />;
   if (error) return <ErrorScreen message={(error as Error).message} />;
