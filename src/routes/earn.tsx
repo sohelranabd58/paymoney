@@ -8,7 +8,9 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { BottomNav } from "@/components/BottomNav";
 import { useChatIdFromSearch } from "@/lib/useChatId";
-import { getUserState, claimAdReward, claimClickAdReward, getPublicConfig } from "@/lib/app.functions";
+import { getUserState, claimAdReward, claimClickAdReward, getPublicConfig, markClickAdOpened } from "@/lib/app.functions";
+import { Switch } from "@/components/ui/switch";
+
 import {
   Marquee, useMonetagSdks, playAd, SectionTitle, AdCard, ClickAdDialog, LoadingScreen, ErrorScreen,
 } from "@/components/earn-ui";
