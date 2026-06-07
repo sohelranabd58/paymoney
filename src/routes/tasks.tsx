@@ -9,7 +9,9 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { BottomNav } from "@/components/BottomNav";
 import { useChatIdFromSearch } from "@/lib/useChatId";
-import { listTasks, claimTask } from "@/lib/app.functions";
+import { listTasks, claimTask, getPublicConfig } from "@/lib/app.functions";
+import { Marquee } from "@/components/earn-ui";
+
 
 export const Route = createFileRoute("/tasks")({
   component: TasksPage,
@@ -47,12 +49,19 @@ type TaskRow = {
 function Inner({ chatId }: { chatId: string }) {
   const qc = useQueryClient();
   const fetchTasks = useServerFn(listTasks);
+  const fetchCfg = useServerFn(getPublicConfig);
   const claim = useServerFn(claimTask);
 
   const { data, isLoading } = useQuery({
     queryKey: ["tasks", chatId],
     queryFn: () => fetchTasks({ data: { chatId } }),
   });
+  const cfgQ = useQuery({
+    queryKey: ["publicConfig"],
+    queryFn: () => fetchCfg(),
+    refetchOnWindowFocus: false,
+  });
+
 
   const mut = useMutation({
     mutationFn: (vars: { taskId: string; proofDataUrl?: string }) =>
@@ -73,12 +82,14 @@ function Inner({ chatId }: { chatId: string }) {
 
   return (
     <div className="min-h-screen pb-24">
+      <Marquee text={cfgQ.data?.settings.marquee_tasks_text || cfgQ.data?.settings.marquee_text || ""} />
       <header className="border-b border-border/50 bg-card/60 backdrop-blur">
         <div className="mx-auto max-w-md px-4 py-3">
           <h1 className="text-base font-semibold">Offers & Tasks</h1>
           <p className="text-xs text-muted-foreground">Complete tasks for bonus points</p>
         </div>
       </header>
+
 
       <main className="mx-auto max-w-md space-y-3 px-4 py-5">
         {isLoading && (

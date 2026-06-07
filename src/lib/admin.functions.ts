@@ -338,8 +338,27 @@ export const adminProcessWithdraw = createServerFn({ method: "POST" })
         }
         const base = `https://sohel.pp.ua/main/bot/fackss/redeem_api.php?key=${encodeURIComponent(botKey)}`;
         const parsePoints = (txt: string): number | null => {
-          const m = txt.match(/(-?\d+)/);
+          const trimmed = txt.trim();
+          // Try JSON first
+          try {
+            const j = JSON.parse(trimmed) as Record<string, unknown>;
+            const candidates = ["points", "balance", "user_points", "current_points", "new_points"];
+            for (const k of candidates) {
+              const v = j?.[k];
+              if (typeof v === "number") return v;
+              if (typeof v === "string" && /^-?\d+$/.test(v)) return parseInt(v, 10);
+            }
+          } catch { /* not json */ }
+          const m = trimmed.match(/(-?\d+)/);
           return m ? parseInt(m[1], 10) : null;
+        };
+        const isSuccess = (txt: string): boolean => {
+          const t = txt.trim().toLowerCase();
+          if (!t) return false;
+          if (t.includes("error") || t.includes("fail") || t.includes("invalid")) return false;
+          if (t.includes("success") || t.includes("added") || t.includes("ok")) return true;
+          // numeric-only response is treated as success (new balance)
+          return /^-?\d+/.test(t);
         };
         // 1) Check old balance
         try {
@@ -355,6 +374,7 @@ export const adminProcessWithdraw = createServerFn({ method: "POST" })
           const text = (await r.text()).trim();
           botResponse = text.slice(0, 500);
           if (!r.ok) throw new Error(`Bot API ${r.status}: ${text.slice(0, 120)}`);
+          if (!isSuccess(text)) throw new Error(`Bot API rejected: ${text.slice(0, 160)}`);
           redeemCode = `BOT:${text.slice(0, 60)}`;
         } catch (e) {
           throw new Error(`Bot redeem failed: ${e instanceof Error ? e.message : "unknown"}`);
@@ -367,6 +387,11 @@ export const adminProcessWithdraw = createServerFn({ method: "POST" })
         } catch (e) {
           console.error("bot check (after) failed", e);
         }
+        // Verification: ensure points actually increased
+        if (botOldPoints !== null && botNewPoints !== null && botNewPoints < botOldPoints + Number(req.amount)) {
+          throw new Error(`Bot balance did not increase as expected (was ${botOldPoints}, now ${botNewPoints})`);
+        }
+
       } else if (redeemKey) {
         // Generic redeem-code generator for other methods
         try {

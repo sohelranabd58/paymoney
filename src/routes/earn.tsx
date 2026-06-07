@@ -1,6 +1,6 @@
 import { useServerFn } from "@tanstack/react-start";
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Coins, Sparkles, Trophy, UserCircle2 } from "lucide-react";
@@ -8,7 +8,9 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { BottomNav } from "@/components/BottomNav";
 import { useChatIdFromSearch } from "@/lib/useChatId";
-import { getUserState, claimAdReward, claimClickAdReward, getPublicConfig } from "@/lib/app.functions";
+import { getUserState, claimAdReward, claimClickAdReward, getPublicConfig, markClickAdOpened } from "@/lib/app.functions";
+import { Switch } from "@/components/ui/switch";
+
 import {
   Marquee, useMonetagSdks, playAd, SectionTitle, AdCard, ClickAdDialog, LoadingScreen, ErrorScreen,
 } from "@/components/earn-ui";
@@ -70,7 +72,16 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
   const fetchState = useServerFn(getUserState);
   const claim = useServerFn(claimAdReward);
   const claimClick = useServerFn(claimClickAdReward);
+  const markOpened = useServerFn(markClickAdOpened);
   const [clickOpen, setClickOpen] = useState(false);
+  const [autoNext, setAutoNext] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("auto_next_ad") === "1";
+  });
+  const [autoLeft, setAutoLeft] = useState(0);
+  useEffect(() => {
+    try { localStorage.setItem("auto_next_ad", autoNext ? "1" : "0"); } catch { /* ignore */ }
+  }, [autoNext]);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["userState", chatId],
@@ -82,15 +93,19 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
 
   const claimMut = useMutation({
     mutationFn: (adType: AdType) => claim({ data: { chatId, adType } }),
-    onSuccess: (res) => {
+    onSuccess: (res, adType) => {
       if (res.earned === 0 && res.pending_points > 0) {
         toast.success(`+${res.pending_points} pending (${res.cycle_ads} ads)`, { icon: <Sparkles className="h-4 w-4" /> });
       } else {
         toast.success(`+${res.earned} points!`, { icon: <Sparkles className="h-4 w-4" /> });
       }
-      try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred("success"); } catch {}
+      try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred("success"); } catch { /* ignore */ }
       qc.invalidateQueries({ queryKey: ["userState", chatId] });
       if (res.needs_click_ad) setClickOpen(true);
+      // Auto-next only for "Watch short ads" (interstitial)
+      if (autoNext && adType === "interstitial" && !res.needs_click_ad) {
+        setAutoLeft(16);
+      }
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -111,13 +126,49 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
     catch (e) { toast.error(e instanceof Error ? e.message : "Ad failed"); }
   }, [loadedSdks, claimMut]);
 
+  // Mark click ad opened (server) whenever the bonus dialog opens, so view-seconds gating works
+  useEffect(() => {
+    if (clickOpen) {
+      markOpened({ data: { chatId } }).catch(() => { /* ignore */ });
+    }
+  }, [clickOpen, chatId, markOpened]);
+
+  // Auto-next countdown -> triggers next short ad when it reaches 0
+  const autoArmedRef = useRef(false);
+  useEffect(() => {
+    if (autoLeft <= 0) {
+      if (autoArmedRef.current && autoNext && data) {
+        autoArmedRef.current = false;
+        const zi = data.settings.zones.interstitial;
+        const limitReached = zi.today >= zi.limit;
+        const cooldownLeftMs = data.user.last_ad_at
+          ? new Date(data.user.last_ad_at).getTime() + zi.cooldown * 1000 - Date.now()
+          : 0;
+        if (!limitReached && cooldownLeftMs <= 0 && !data.user.banned && !data.user.flagged) {
+          watchAd("interstitial", zi.sdk_id, false);
+        }
+      }
+      return;
+    }
+    autoArmedRef.current = true;
+    const id = setInterval(() => setAutoLeft((s) => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(id);
+  }, [autoLeft, autoNext, data, watchAd]);
+
+
+
   const playClickAd = useCallback(async () => {
     if (!data) return;
     const sdkId = data.settings.click_ad.sdk_id;
     if (!loadedSdks.has(sdkId)) { toast.error("Bonus ad loading..."); return; }
-    try { await playAd(sdkId, true); clickMut.mutate(); }
+    try {
+      await markOpened({ data: { chatId } });
+      await playAd(sdkId, true);
+      clickMut.mutate();
+    }
     catch (e) { toast.error(e instanceof Error ? e.message : "Ad failed"); }
-  }, [data, loadedSdks, clickMut]);
+  }, [data, loadedSdks, clickMut, markOpened, chatId]);
+
 
   if (isLoading) return <LoadingScreen />;
   if (error) return <ErrorScreen message={(error as Error).message} />;
@@ -167,10 +218,22 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
           </Card>
         )}
         <section>
-          <SectionTitle>Rewarded Ads</SectionTitle>
+          <div className="mb-2 flex items-center justify-between px-1">
+            <SectionTitle>Rewarded Ads</SectionTitle>
+            <label className="flex cursor-pointer items-center gap-2 rounded-full border border-border bg-card px-2.5 py-1 text-[10px] font-medium">
+              <span>Auto-next</span>
+              <Switch checked={autoNext} onCheckedChange={setAutoNext} />
+            </label>
+          </div>
           <p className="mb-3 px-1 text-xs text-muted-foreground">
             Get rewards for actions · Cycle: {user.cycle_ads}/{settings.click_ad.every}
+            {autoNext && autoLeft > 0 && (
+              <span className="ml-2 rounded-full bg-primary/15 px-2 py-0.5 font-medium text-primary">
+                Next ad in {autoLeft}s
+              </span>
+            )}
           </p>
+
           <div className="space-y-2">
             <AdCard emoji="🤩" title="Watch short ads" subtitle="Rewarded Interstitial"
               points={z.interstitial.points} today={z.interstitial.today} limit={z.interstitial.limit}

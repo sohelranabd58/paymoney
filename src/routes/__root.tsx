@@ -199,11 +199,12 @@ function RootComponent() {
         <AdminInvalidScreen />
       ) : (
         <>
-          <Outlet />
           {!hideBanner && <GlobalBanner />}
+          <Outlet />
         </>
       )}
       <Toaster position="top-center" />
+
     </QueryClientProvider>
   );
 }
@@ -214,10 +215,16 @@ function GlobalBanner() {
   useEffect(() => { setShow(true); }, []);
   if (!show) return null;
   return (
-    <div className="pointer-events-auto fixed inset-x-0 bottom-16 z-20 px-2">
-      <HighPerfBanner />
-    </div>
+    <>
+      {/* Reserve space so fixed top banner does not cover content */}
+      <div aria-hidden className="h-[68px] w-full" />
+      <div className="pointer-events-auto fixed inset-x-0 top-0 z-40 border-b border-border/40 bg-background/95 px-2 pb-1 pt-1 backdrop-blur">
+        <HighPerfBanner />
+      </div>
+    </>
   );
 }
+
+
 
 
