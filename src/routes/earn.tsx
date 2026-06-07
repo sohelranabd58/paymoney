@@ -1,6 +1,6 @@
 import { useServerFn } from "@tanstack/react-start";
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Coins, Sparkles, Trophy, UserCircle2 } from "lucide-react";
@@ -134,11 +134,11 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
   }, [clickOpen, chatId, markOpened]);
 
   // Auto-next countdown -> triggers next short ad when it reaches 0
-  const autoArmedRef = useState({ armed: false })[0];
+  const autoArmedRef = useRef(false);
   useEffect(() => {
     if (autoLeft <= 0) {
-      if (autoArmedRef.armed && autoNext && data) {
-        autoArmedRef.armed = false;
+      if (autoArmedRef.current && autoNext && data) {
+        autoArmedRef.current = false;
         const zi = data.settings.zones.interstitial;
         const limitReached = zi.today >= zi.limit;
         const cooldownLeftMs = data.user.last_ad_at
@@ -150,10 +150,11 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
       }
       return;
     }
-    autoArmedRef.armed = true;
+    autoArmedRef.current = true;
     const id = setInterval(() => setAutoLeft((s) => Math.max(0, s - 1)), 1000);
     return () => clearInterval(id);
-  }, [autoLeft, autoNext, data, watchAd, autoArmedRef]);
+  }, [autoLeft, autoNext, data, watchAd]);
+
 
 
   const playClickAd = useCallback(async () => {
