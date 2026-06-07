@@ -217,10 +217,22 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
           </Card>
         )}
         <section>
-          <SectionTitle>Rewarded Ads</SectionTitle>
+          <div className="mb-2 flex items-center justify-between px-1">
+            <SectionTitle>Rewarded Ads</SectionTitle>
+            <label className="flex cursor-pointer items-center gap-2 rounded-full border border-border bg-card px-2.5 py-1 text-[10px] font-medium">
+              <span>Auto-next</span>
+              <Switch checked={autoNext} onCheckedChange={setAutoNext} />
+            </label>
+          </div>
           <p className="mb-3 px-1 text-xs text-muted-foreground">
             Get rewards for actions · Cycle: {user.cycle_ads}/{settings.click_ad.every}
+            {autoNext && autoLeft > 0 && (
+              <span className="ml-2 rounded-full bg-primary/15 px-2 py-0.5 font-medium text-primary">
+                Next ad in {autoLeft}s
+              </span>
+            )}
           </p>
+
           <div className="space-y-2">
             <AdCard emoji="🤩" title="Watch short ads" subtitle="Rewarded Interstitial"
               points={z.interstitial.points} today={z.interstitial.today} limit={z.interstitial.limit}
