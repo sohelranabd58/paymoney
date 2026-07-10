@@ -124,7 +124,14 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
         setAutoLeft(delay);
       }
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error, adType) => {
+      // If the claim itself fails during an auto-next cycle, pause the loop so we don't hammer a broken flow.
+      if (autoNext && adType === "interstitial") {
+        setAutoNext(false);
+        setAutoLeft(0);
+      }
+      toast.error(e.message);
+    },
   });
 
   const clickMut = useMutation({
