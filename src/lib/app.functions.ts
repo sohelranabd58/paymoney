@@ -95,6 +95,11 @@ function buildZonesAndMeta(settings: Record<string, string>, todayCounts?: { int
     sponsor_min_reward: Number(settings.sponsor_min_reward ?? 10),
     sponsor_min_slots: Number(settings.sponsor_min_slots ?? 10),
     global_banner_enabled: (settings.global_banner_enabled ?? "true") === "true",
+    auto_next_ad_enabled: (settings.auto_next_ad_enabled ?? "true") === "true",
+    auto_next_min_delay_seconds: Number(settings.auto_next_min_delay_seconds ?? 12),
+    auto_next_max_delay_seconds: Number(settings.auto_next_max_delay_seconds ?? 22),
+    auto_next_min_view_seconds: Number(settings.auto_next_min_view_seconds ?? 15),
+    auto_next_max_view_seconds: Number(settings.auto_next_max_view_seconds ?? 25),
     click_ad: {
       zone: clickZone,
       sdk_id: settings.click_ad_sdk_id || `show_${clickZone}`,

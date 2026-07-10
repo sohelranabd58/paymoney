@@ -79,6 +79,8 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
     return localStorage.getItem("auto_next_ad") === "1";
   });
   const [autoLeft, setAutoLeft] = useState(0);
+  const autoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
     try { localStorage.setItem("auto_next_ad", autoNext ? "1" : "0"); } catch { /* ignore */ }
   }, [autoNext]);
@@ -91,6 +93,19 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
 
   const loadedSdks = useMonetagSdks(data?.settings.zones);
 
+  // Random integer in [min, max] inclusive with safe fallback
+  const randInt = useCallback((min: number, max: number, fallback: number) => {
+    const lo = Math.max(1, Math.floor(min));
+    const hi = Math.max(lo, Math.floor(max));
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return fallback;
+    return Math.floor(Math.random() * (hi - lo + 1)) + lo;
+  }, []);
+
+  const clearAutoTimers = useCallback(() => {
+    if (autoTimerRef.current) { clearTimeout(autoTimerRef.current); autoTimerRef.current = null; }
+    if (autoIntervalRef.current) { clearInterval(autoIntervalRef.current); autoIntervalRef.current = null; }
+  }, []);
+
   const claimMut = useMutation({
     mutationFn: (adType: AdType) => claim({ data: { chatId, adType } }),
     onSuccess: (res, adType) => {
@@ -102,9 +117,11 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
       try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred("success"); } catch { /* ignore */ }
       qc.invalidateQueries({ queryKey: ["userState", chatId] });
       if (res.needs_click_ad) setClickOpen(true);
-      // Auto-next only for "Watch short ads" (interstitial)
-      if (autoNext && adType === "interstitial" && !res.needs_click_ad) {
-        setAutoLeft(16);
+      // Auto-next only for "Watch short ads" (interstitial), and never while a bonus dialog is due
+      if (autoNext && adType === "interstitial" && !res.needs_click_ad && data) {
+        const s = data.settings;
+        const delay = randInt(s.auto_next_min_delay_seconds, s.auto_next_max_delay_seconds, 16);
+        setAutoLeft(delay);
       }
     },
     onError: (e: Error) => toast.error(e.message),
@@ -122,9 +139,23 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
 
   const watchAd = useCallback(async (adType: AdType, sdkId: string, popup: boolean) => {
     if (!loadedSdks.has(sdkId)) { toast.error("Ad SDK loading... try again"); return; }
-    try { await playAd(sdkId, popup); claimMut.mutate(adType); }
+    try {
+      // If this is an auto-triggered short ad, race the SDK against a randomized max view window
+      // so the ad "auto-closes" after a jittered duration and the loop can continue.
+      if (autoNext && adType === "interstitial" && data) {
+        const s = data.settings;
+        const viewSec = randInt(s.auto_next_min_view_seconds, s.auto_next_max_view_seconds, 20);
+        await Promise.race([
+          playAd(sdkId, popup),
+          new Promise<void>((resolve) => setTimeout(resolve, viewSec * 1000)),
+        ]);
+      } else {
+        await playAd(sdkId, popup);
+      }
+      claimMut.mutate(adType);
+    }
     catch (e) { toast.error(e instanceof Error ? e.message : "Ad failed"); }
-  }, [loadedSdks, claimMut]);
+  }, [loadedSdks, claimMut, autoNext, data, randInt]);
 
   // Mark click ad opened (server) whenever the bonus dialog opens, so view-seconds gating works
   useEffect(() => {
@@ -136,24 +167,37 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
   // Auto-next countdown -> triggers next short ad when it reaches 0
   const autoArmedRef = useRef(false);
   useEffect(() => {
+    // Turning auto-next off cancels any pending cycle
+    if (!autoNext) {
+      clearAutoTimers();
+      autoArmedRef.current = false;
+      setAutoLeft(0);
+      return;
+    }
     if (autoLeft <= 0) {
-      if (autoArmedRef.current && autoNext && data) {
+      if (autoArmedRef.current && data && !clickOpen) {
         autoArmedRef.current = false;
         const zi = data.settings.zones.interstitial;
         const limitReached = zi.today >= zi.limit;
         const cooldownLeftMs = data.user.last_ad_at
           ? new Date(data.user.last_ad_at).getTime() + zi.cooldown * 1000 - Date.now()
           : 0;
-        if (!limitReached && cooldownLeftMs <= 0 && !data.user.banned && !data.user.flagged) {
+        const pageVisible = typeof document === "undefined" || !document.hidden;
+        if (pageVisible && !limitReached && cooldownLeftMs <= 0 && !data.user.banned && !data.user.flagged) {
           watchAd("interstitial", zi.sdk_id, false);
         }
       }
       return;
     }
     autoArmedRef.current = true;
-    const id = setInterval(() => setAutoLeft((s) => Math.max(0, s - 1)), 1000);
-    return () => clearInterval(id);
-  }, [autoLeft, autoNext, data, watchAd]);
+    autoIntervalRef.current = setInterval(() => setAutoLeft((s) => Math.max(0, s - 1)), 1000);
+    return () => {
+      if (autoIntervalRef.current) { clearInterval(autoIntervalRef.current); autoIntervalRef.current = null; }
+    };
+  }, [autoLeft, autoNext, data, watchAd, clickOpen, clearAutoTimers]);
+
+  // Cleanup on unmount
+  useEffect(() => () => clearAutoTimers(), [clearAutoTimers]);
 
 
 
