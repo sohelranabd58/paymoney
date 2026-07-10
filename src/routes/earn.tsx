@@ -146,22 +146,54 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
 
   const watchAd = useCallback(async (adType: AdType, sdkId: string, popup: boolean) => {
     if (!loadedSdks.has(sdkId)) { toast.error("Ad SDK loading... try again"); return; }
+    const isAutoShort = autoNext && adType === "interstitial" && !!data;
+    const startedAt = Date.now();
     try {
-      // If this is an auto-triggered short ad, race the SDK against a randomized max view window
-      // so the ad "auto-closes" after a jittered duration and the loop can continue.
-      if (autoNext && adType === "interstitial" && data) {
+      if (isAutoShort && data) {
         const s = data.settings;
         const viewSec = randInt(s.auto_next_min_view_seconds, s.auto_next_max_view_seconds, 20);
-        await Promise.race([
-          playAd(sdkId, popup),
-          new Promise<void>((resolve) => setTimeout(resolve, viewSec * 1000)),
-        ]);
+        // Server-required min view (fallback 5s) — used as the "SDK really started" threshold.
+        const minViewMs = Math.max(5, Math.floor(s.auto_next_min_view_seconds || 15)) * 1000;
+
+        let sdkError: unknown = null;
+        let sdkResolved = false;
+        const sdkPromise = playAd(sdkId, popup)
+          .then(() => { sdkResolved = true; })
+          .catch((e: unknown) => { sdkError = e; });
+        const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, viewSec * 1000));
+        await Promise.race([sdkPromise, timeoutPromise]);
+
+        const elapsed = Date.now() - startedAt;
+        // Guard 1: SDK threw before min view — treat as "no fill / not started". Do not claim, pause auto.
+        if (sdkError && elapsed < minViewMs) {
+          setAutoNext(false);
+          setAutoLeft(0);
+          toast.error(sdkError instanceof Error ? sdkError.message : "Ad failed to start — auto-next paused");
+          return;
+        }
+        // Guard 2: SDK resolved suspiciously fast (user closed or no real view). Skip claim this cycle.
+        if (sdkResolved && elapsed < minViewMs) {
+          toast.error("Ad closed too quickly — skipping reward");
+          // Still schedule next attempt so the loop continues at random cadence.
+          const delay = randInt(s.auto_next_min_delay_seconds, s.auto_next_max_delay_seconds, 16);
+          setAutoLeft(delay);
+          return;
+        }
+        // Guard 3: SDK still hasn't confirmed anything AND errored silently — bail.
+        if (sdkError && !sdkResolved && elapsed < minViewMs) {
+          setAutoNext(false);
+          setAutoLeft(0);
+          return;
+        }
       } else {
         await playAd(sdkId, popup);
       }
       claimMut.mutate(adType);
     }
-    catch (e) { toast.error(e instanceof Error ? e.message : "Ad failed"); }
+    catch (e) {
+      if (isAutoShort) { setAutoNext(false); setAutoLeft(0); }
+      toast.error(e instanceof Error ? e.message : "Ad failed");
+    }
   }, [loadedSdks, claimMut, autoNext, data, randInt]);
 
   // Mark click ad opened (server) whenever the bonus dialog opens, so view-seconds gating works
