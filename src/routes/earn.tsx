@@ -26,6 +26,11 @@ export const Route = createFileRoute("/earn")({
 });
 
 type AdType = "interstitial" | "popup" | "inapp";
+type WatchMode = "manual" | "auto";
+
+function wait(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
 
 function EarnPage() {
   const chatId = useChatIdFromSearch();
@@ -81,8 +86,12 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
   const [autoLeft, setAutoLeft] = useState(0);
   const autoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoArmedRef = useRef(false);
+  const autoRunningRef = useRef(false);
+  const autoNextRef = useRef(autoNext);
   useEffect(() => {
     try { localStorage.setItem("auto_next_ad", autoNext ? "1" : "0"); } catch { /* ignore */ }
+    autoNextRef.current = autoNext;
   }, [autoNext]);
 
   const { data, isLoading, error } = useQuery({
@@ -104,32 +113,33 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
   const clearAutoTimers = useCallback(() => {
     if (autoTimerRef.current) { clearTimeout(autoTimerRef.current); autoTimerRef.current = null; }
     if (autoIntervalRef.current) { clearInterval(autoIntervalRef.current); autoIntervalRef.current = null; }
+    autoArmedRef.current = false;
   }, []);
+
+  const pauseAutoNext = useCallback((message?: string) => {
+    clearAutoTimers();
+    autoRunningRef.current = false;
+    autoNextRef.current = false;
+    setAutoLeft(0);
+    setAutoNext(false);
+    if (message) toast.error(message);
+  }, [clearAutoTimers]);
 
   const claimMut = useMutation({
     mutationFn: (adType: AdType) => claim({ data: { chatId, adType } }),
-    onSuccess: (res, adType) => {
+    onSuccess: async (res) => {
       if (res.earned === 0 && res.pending_points > 0) {
         toast.success(`+${res.pending_points} pending (${res.cycle_ads} ads)`, { icon: <Sparkles className="h-4 w-4" /> });
       } else {
         toast.success(`+${res.earned} points!`, { icon: <Sparkles className="h-4 w-4" /> });
       }
       try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred("success"); } catch { /* ignore */ }
-      qc.invalidateQueries({ queryKey: ["userState", chatId] });
+      await qc.invalidateQueries({ queryKey: ["userState", chatId] });
       if (res.needs_click_ad) setClickOpen(true);
-      // Auto-next only for "Watch short ads" (interstitial), and never while a bonus dialog is due
-      if (autoNext && adType === "interstitial" && !res.needs_click_ad && data) {
-        const s = data.settings;
-        const delay = randInt(s.auto_next_min_delay_seconds, s.auto_next_max_delay_seconds, 16);
-        setAutoLeft(delay);
-      }
     },
     onError: (e: Error, adType) => {
       // If the claim itself fails during an auto-next cycle, pause the loop so we don't hammer a broken flow.
-      if (autoNext && adType === "interstitial") {
-        setAutoNext(false);
-        setAutoLeft(0);
-      }
+      if (autoNextRef.current && adType === "interstitial") pauseAutoNext();
       toast.error(e.message);
     },
   });
@@ -144,57 +154,72 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const watchAd = useCallback(async (adType: AdType, sdkId: string, popup: boolean) => {
+  const watchAd = useCallback(async (adType: AdType, sdkId: string, popup: boolean, mode: WatchMode = "manual") => {
     if (!loadedSdks.has(sdkId)) { toast.error("Ad SDK loading... try again"); return; }
-    const isAutoShort = autoNext && adType === "interstitial" && !!data;
+    if (claimMut.isPending) return;
+    const isAutoShort = mode === "auto" && adType === "interstitial" && !!data;
+    if (isAutoShort && autoRunningRef.current) return;
     const startedAt = Date.now();
+    let claimStarted = false;
     try {
       if (isAutoShort && data) {
+        autoRunningRef.current = true;
+        clearAutoTimers();
+        setAutoLeft(0);
         const s = data.settings;
         const viewSec = randInt(s.auto_next_min_view_seconds, s.auto_next_max_view_seconds, 20);
-        // Server-required min view (fallback 5s) — used as the "SDK really started" threshold.
-        const minViewMs = Math.max(5, Math.floor(s.auto_next_min_view_seconds || 15)) * 1000;
+        // Server-required min view (fallback 5s). Auto mode must wait for the SDK to close/resolve too.
+        const minViewSec = Math.max(5, Math.floor(s.auto_next_min_view_seconds || 15));
+        const maxWaitSec = Math.max(viewSec + 75, minViewSec + 45);
 
-        let sdkError: unknown = null;
-        let sdkResolved = false;
-        const sdkPromise = playAd(sdkId, popup)
-          .then(() => { sdkResolved = true; })
-          .catch((e: unknown) => { sdkError = e; });
-        const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, viewSec * 1000));
-        await Promise.race([sdkPromise, timeoutPromise]);
+        let sdkTimeout: ReturnType<typeof setTimeout> | null = null;
+        const sdkResult = await Promise.race<"closed" | "timeout">([
+          playAd(sdkId, popup).then(() => "closed"),
+          new Promise<"timeout">((resolve) => {
+            sdkTimeout = setTimeout(() => resolve("timeout"), maxWaitSec * 1000);
+          }),
+        ]);
+        if (sdkTimeout) clearTimeout(sdkTimeout);
 
-        const elapsed = Date.now() - startedAt;
-        // Guard 1: SDK threw before min view — treat as "no fill / not started". Do not claim, pause auto.
-        if (sdkError && elapsed < minViewMs) {
-          setAutoNext(false);
-          setAutoLeft(0);
-          toast.error(sdkError instanceof Error ? sdkError.message : "Ad failed to start — auto-next paused");
+        if (sdkResult !== "closed") {
+          pauseAutoNext("Ad did not close safely — auto-next paused");
           return;
         }
-        // Guard 2: SDK resolved suspiciously fast (user closed or no real view). Skip claim this cycle.
-        if (sdkResolved && elapsed < minViewMs) {
+
+        const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+        if (elapsedSec < minViewSec) {
           toast.error("Ad closed too quickly — skipping reward");
-          // Still schedule next attempt so the loop continues at random cadence.
-          const delay = randInt(s.auto_next_min_delay_seconds, s.auto_next_max_delay_seconds, 16);
-          setAutoLeft(delay);
+          if (autoNextRef.current) {
+            const retryDelay = randInt(s.auto_next_min_delay_seconds, s.auto_next_max_delay_seconds, 16);
+            setAutoLeft(Math.max(retryDelay, minViewSec - elapsedSec + 1));
+          }
           return;
         }
-        // Guard 3: SDK still hasn't confirmed anything AND errored silently — bail.
-        if (sdkError && !sdkResolved && elapsed < minViewMs) {
-          setAutoNext(false);
-          setAutoLeft(0);
-          return;
-        }
+
+        if (elapsedSec < viewSec) await wait((viewSec - elapsedSec) * 1000);
+        if (!autoNextRef.current || (typeof document !== "undefined" && document.hidden)) return;
+
+        claimStarted = true;
+        const res = await claimMut.mutateAsync(adType);
+        if (!autoNextRef.current || res.needs_click_ad) return;
+
+        const randomDelay = randInt(s.auto_next_min_delay_seconds, s.auto_next_max_delay_seconds, 16);
+        const cooldownDelay = Math.max(0, Math.floor(s.zones.interstitial.cooldown || 0)) + 1;
+        const serverGuardDelay = minViewSec + 1;
+        setAutoLeft(Math.max(randomDelay, cooldownDelay, serverGuardDelay));
+        return;
       } else {
         await playAd(sdkId, popup);
       }
       claimMut.mutate(adType);
     }
     catch (e) {
-      if (isAutoShort) { setAutoNext(false); setAutoLeft(0); }
-      toast.error(e instanceof Error ? e.message : "Ad failed");
+      if (isAutoShort) pauseAutoNext();
+      if (!claimStarted) toast.error(e instanceof Error ? e.message : "Ad failed");
+    } finally {
+      if (isAutoShort) autoRunningRef.current = false;
     }
-  }, [loadedSdks, claimMut, autoNext, data, randInt]);
+  }, [loadedSdks, claimMut, data, randInt, clearAutoTimers, pauseAutoNext]);
 
   // Mark click ad opened (server) whenever the bonus dialog opens, so view-seconds gating works
   useEffect(() => {
@@ -204,12 +229,10 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
   }, [clickOpen, chatId, markOpened]);
 
   // Auto-next countdown -> triggers next short ad when it reaches 0
-  const autoArmedRef = useRef(false);
   useEffect(() => {
     // Turning auto-next off cancels any pending cycle
     if (!autoNext) {
       clearAutoTimers();
-      autoArmedRef.current = false;
       setAutoLeft(0);
       return;
     }
@@ -222,8 +245,20 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
           ? new Date(data.user.last_ad_at).getTime() + zi.cooldown * 1000 - Date.now()
           : 0;
         const pageVisible = typeof document === "undefined" || !document.hidden;
-        if (pageVisible && !limitReached && cooldownLeftMs <= 0 && !data.user.banned && !data.user.flagged) {
-          watchAd("interstitial", zi.sdk_id, false);
+        if (!pageVisible) {
+          pauseAutoNext();
+          return;
+        }
+        if (limitReached || data.user.banned || data.user.flagged) {
+          pauseAutoNext();
+          return;
+        }
+        if (cooldownLeftMs > 0) {
+          setAutoLeft(Math.ceil(cooldownLeftMs / 1000) + 1);
+          return;
+        }
+        if (!claimMut.isPending && !autoRunningRef.current) {
+          watchAd("interstitial", zi.sdk_id, false, "auto");
         }
       }
       return;
@@ -233,7 +268,7 @@ function EarnLoggedIn({ chatId }: { chatId: string }) {
     return () => {
       if (autoIntervalRef.current) { clearInterval(autoIntervalRef.current); autoIntervalRef.current = null; }
     };
-  }, [autoLeft, autoNext, data, watchAd, clickOpen, clearAutoTimers]);
+  }, [autoLeft, autoNext, data, watchAd, clickOpen, clearAutoTimers, pauseAutoNext, claimMut.isPending]);
 
   // Cleanup on unmount
   useEffect(() => () => clearAutoTimers(), [clearAutoTimers]);
